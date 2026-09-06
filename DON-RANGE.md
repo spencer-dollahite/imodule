@@ -11,8 +11,7 @@ It contains two labs from the fictional **NAVSTA Cutlass Bay** enclave:
 | `don-recon-101` | stock bases only (build locally) | SMB/service recon from a user workstation |
 | `don-ids-201` | custom bases `don.sensor`, `don.redteam` | Zeek/Snort detection of a cross-VLAN scan |
 | `file-system-permissions` | stock `labtainer.network.ssh2` + `labtainer.kali` | nginx path traversal, offline shadow cracking (rockyou), remediation |
-
-_`cs3670-syslog` (syslog -> loghost -> Wazuh, with hydra scenarios) is in progress and will be added to this tar._
+| `cs3670-syslog` | `labtainer.network.ssh2`, `labtainer.kali`, custom `don.wazuh` | rsyslog -> loghost -> Wazuh; triage fast/slow brute force vs a real login |
 
 ## How this differs from the current imodule
 
