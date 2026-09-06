@@ -1,68 +1,33 @@
-# DoN Range IModule (new, separate)
+# DoN Range imodule (encrypted)
 
-`don-range-imodule.tar` is a **new, separate** IModule generated from the
-[don-range](https://github.com/spencer-dollahite/don-range) lab-family generator.
-It does **not** replace `imodule.tar`; the existing labs are untouched.
+This repo hosts two imodules side by side:
 
-It contains two labs from the fictional **NAVSTA Cutlass Bay** enclave:
+| File | What |
+|------|------|
+| `imodule.tar` | the original legacy imodule (unchanged) |
+| `imodule.tar.enc` (+ `.sha256`) | the new DoN Range labs, **AES-256 encrypted** |
 
-| Lab | Runs on | What it exercises |
-|-----|---------|-------------------|
-| `don-recon-101` | stock bases only (build locally) | SMB/service recon from a user workstation |
-| `don-ids-201` | custom bases `don.sensor`, `don.redteam` | Zeek/Snort detection of a cross-VLAN scan |
-| `file-system-permissions` | stock `labtainer.network.ssh2` + `labtainer.kali` | nginx path traversal, offline shadow cracking (rockyou), remediation |
-| `cs3670-syslog` | `labtainer.network.ssh2`, `labtainer.kali`, custom `don.wazuh` | rsyslog -> loghost -> Wazuh; triage fast/slow brute force vs a real login |
+The encrypted bundle contains four labs in the new format, each with built
+PDF/HTML manuals and report tooling:
 
-## How this differs from the current imodule
+| Lab | What it exercises |
+|-----|-------------------|
+| `don-recon-101` | SMB/service recon from a user workstation |
+| `don-ids-201` | Zeek/Snort detection of a cross-VLAN scan |
+| `file-system-permissions` | nginx path traversal, offline shadow cracking (rockyou), remediation |
+| `cs3670-syslog` | rsyslog -> loghost -> Wazuh; triage fast/slow brute force vs a real login |
 
-| | Current `imodule.tar` | New `don-range-imodule.tar` |
-|---|---|---|
-| Labs | `cs3670-syslog`, `file-system-permissions` | `don-recon-101`, `don-ids-201` |
-| Authoring | hand-built per lab | generated from one world model (`world.yml`) |
-| Contents | run-only (config/instr_config/docs) | **full** dirs incl. dockerfiles + container files (so you can `rebuild` locally to test) |
-| Manuals | docx / html / pdf | **Markdown source → PDF + HTML** (pandoc, one shared theme) |
-| Reports | docx template | **Markdown**, edited in vim, `submit` → single self-contained PDF to `mystuff` for LMS |
-| Networking | single subnet | function-based VLANs, gateway routing + NAT, realistic inward DNS |
-| Monitoring | n/a | passive tap → Zeek/Snort sensor over captured pcaps |
-| Extras | n/a | per-user KeePassXC vaults; vim/tmux/bash-completion/Firefox on every container |
+## Students
 
-## Test it
-
-The tar carries the full lab dirs, so you can build and run locally.
+Use the `donlab` launcher from the generator repo
+(`spencer-dollahite/don-range`, `dist/donlab`). It pulls this encrypted bundle,
+decrypts it (key baked in), installs it via `imodule`, and starts the lab -- so
+every start gets the latest:
 
 ```bash
-# 1. Load the imodule into your Labtainers install
-imodule file:///absolute/path/to/don-range-imodule.tar
-#    (or publish it and use the https URL)
-
-# 2. Start with the simplest lab (stock bases; builds locally on first run)
-labtainer don-recon-101
+donlab <labname>
 ```
 
-`don-recon-101` needs no custom images. If the framework tries to pull from the
-`ssdollahite` registry and the image is not there yet, build it locally first:
-
-```bash
-cd $LABTAINER_DIR/scripts/labtainer-student/bin && ./rebuild don-recon-101
-labtainer don-recon-101
-```
-
-`don-ids-201` additionally needs the custom base images built and available:
-
-```bash
-# from the don-range repo:
-docker login -u ssdollahite            # run yourself; token stays local
-cd bases && ./build_bases.sh don.sensor don.redteam    # add PUSH=1 to push
-```
-
-It also wants more RAM (sensor + gateway + hosts ~2.5 GB); check the generator's
-dry-run budget line before running on an 8 GB VM.
-
-## Notes
-
-- Registry is `ssdollahite`. For normal student distribution (run-only imodule,
-  images pulled from Docker Hub), push the lab and base images first, then a
-  slimmer run-only tar can be produced. This tar is the **full** designer package
-  for testing.
-- To inspect without installing: `tar tf don-range-imodule.tar` and
-  `tar xf don-range-imodule.tar -C /tmp/dr && ls /tmp/dr`.
+`imodule` never sees ciphertext; `donlab` decrypts and hands it a local file.
+Publishing an update is just `don-pack` + replacing `imodule.tar.enc` (+ `.sha256`)
+here; students pick it up on their next `donlab`.
