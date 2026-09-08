@@ -108,6 +108,26 @@ LT="$(command -v labtainer || echo "${LABTAINER_DIR:-}/scripts/labtainer-student
 LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
 [ -n "$LTDIR" ] || { echo "donlab: could not locate the Labtainers tree from $LT."; exit 1; }
 
+# ---- prune stale per-container files left by a container RENAME ----
+# The imodule install merges into the lab dir, so if a lab's containers were renamed
+# (e.g. fileserver -> hi-fs01), the OLD dockerfiles / dirs linger next to the new ones
+# and the framework trips ("KeyError"). Remove any dockerfile/dir whose container is no
+# longer a CONTAINER in start.config.
+prune_stale() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" df c
+  [ -f "$sc" ] || return 0
+  local conts; conts="$(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc")"
+  [ -n "$conts" ] || return 0
+  for df in "$LTDIR/labs/$LAB/dockerfiles/Dockerfile.$LAB."*.student; do
+    [ -e "$df" ] || continue
+    c="$(basename "$df")"; c="${c#Dockerfile.$LAB.}"; c="${c%.student}"
+    if ! printf '%s\n' "$conts" | grep -qx "$c"; then
+      rm -f "$df"; rm -rf "$LTDIR/labs/$LAB/$c"
+    fi
+  done
+}
+prune_stale
+
 # ---- open the lab manual in a browser (best effort; needs a display) ----
 open_manual() {
   local m="$LTDIR/labs/$LAB/docs/$LAB.html" b
