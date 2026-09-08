@@ -125,6 +125,18 @@ prune_stale() {
       rm -f "$df"; rm -rf "$LTDIR/labs/$LAB/$c"
     fi
   done
+  # Labtainers reuses a cached parameterized copy at scripts/labtainer-student/.tmp/<lab>/
+  # start.config if present; after a rename it still lists the OLD container names, which
+  # crashes start.py (KeyError). Drop it if any of its CONTAINERs are no longer real.
+  local lsdir tmpsc tc
+  lsdir="$(cd "$(dirname "$LT")/.." 2>/dev/null && pwd || true)"
+  tmpsc="$lsdir/.tmp/$LAB/start.config"
+  if [ -n "$lsdir" ] && [ -f "$tmpsc" ]; then
+    while IFS= read -r tc; do
+      [ -n "$tc" ] || continue
+      printf '%s\n' "$conts" | grep -qx "$tc" || { rm -rf "$lsdir/.tmp/$LAB"; break; }
+    done < <(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$tmpsc")
+  fi
 }
 prune_stale
 
