@@ -94,10 +94,19 @@ if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
   else echo "WARN: could not fetch imodule; using installed version."; fi
 fi
 
+# ---- preflight: the things every lab needs ----
+command -v docker >/dev/null 2>&1 || { echo "donlab: docker is not installed or not on your PATH."; exit 1; }
+if ! docker ps >/dev/null 2>&1; then
+  echo "donlab: can't talk to the Docker daemon. Is it running? Are you in the 'docker' group?"
+  echo "        try:  sudo systemctl start docker    (and log out/in if you were just added to the group)"
+  exit 1
+fi
+
 # ---- locate labtainer and its tree ----
 LT="$(command -v labtainer || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer")"
-[ -x "$LT" ] || { echo "labtainer not found -- add it to PATH or set LABTAINER_DIR."; exit 1; }
+[ -x "$LT" ] || { echo "donlab: labtainer not found -- add it to PATH or set LABTAINER_DIR."; exit 1; }
 LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
+[ -n "$LTDIR" ] || { echo "donlab: could not locate the Labtainers tree from $LT."; exit 1; }
 
 # ---- open the lab manual in a browser (best effort; needs a display) ----
 open_manual() {
@@ -157,11 +166,35 @@ lab_tmux() {
   fi
 }
 
+# ---- start the lab, self-healing a common failure: a leftover Docker network (or a
+#      not-fully-stopped previous lab) with an overlapping subnet blocks the start, so no
+#      containers come up. Detect the framework's cleanup hint, clear it, and retry once. ----
+LT_LOG="$TMP/labtainer.log"
+lab_running() { docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^$LAB\.[^.]*\.student$"; }
+run_lab() {   # $1 = optional PATH prefix (the tmux gnome-terminal shim)
+  if [ -n "${1:-}" ]; then PYTHONUNBUFFERED=1 PATH="$1:$PATH" "$LT" "${PASS[@]}" 2>&1 | tee "$LT_LOG"
+  else                     PYTHONUNBUFFERED=1                "$LT" "${PASS[@]}" 2>&1 | tee "$LT_LOG"; fi
+}
+start_lab() {  # $1 = optional PATH prefix
+  run_lab "${1:-}"
+  lab_running && return 0
+  local nets stale n l
+  nets=$(grep -oE 'network rm [A-Za-z0-9_.-]+' "$LT_LOG" 2>/dev/null | awk '{print $NF}' | sort -u)
+  stale=$(grep -oE "stop the lab \['[^']+'\]" "$LT_LOG" 2>/dev/null | grep -oE "'[^']+'" | tr -d "'" | sort -u)
+  if [ -n "$nets$stale" ]; then
+    for l in $stale; do echo "donlab: stopping a leftover lab ('$l') that was blocking the start"; "$(dirname "$LT")/stoplab" "$l" >/dev/null 2>&1 || true; done
+    for n in $nets;  do echo "donlab: clearing a leftover network ('$n') that was blocking the start"; docker network rm "$n" >/dev/null 2>&1 || true; done
+    run_lab "${1:-}"
+  fi
+  lab_running || echo "donlab: the lab did not start -- see the messages above (try: stoplab $LAB, then run donlab again)."
+}
+
 # ---- standard (pop-up terminals) mode ----
 if [ "$USE_TMUX" = 0 ] || ! command -v tmux >/dev/null 2>&1; then
   [ "$USE_TMUX" = 1 ] && echo "tmux not found; using standard pop-up terminals."
   open_manual
-  exec "$LT" "${PASS[@]}"
+  start_lab ""
+  exit 0
 fi
 
 # ---- tmux mode: suppress the pop-up terminals, start the lab, then lay it out ----
@@ -169,7 +202,8 @@ SHIM="$(mktemp -d)"
 printf '#!/bin/sh\nexit 0\n' > "$SHIM/gnome-terminal"
 cp "$SHIM/gnome-terminal" "$SHIM/xterm"
 chmod +x "$SHIM/gnome-terminal" "$SHIM/xterm"
-PATH="$SHIM:$PATH" "$LT" "${PASS[@]}"
+start_lab "$SHIM"
 open_manual
-lab_tmux
+# Only lay out tmux if the lab actually came up; start_lab already explained any failure.
+if lab_running; then lab_tmux; fi
 # DONLAB-END
