@@ -1,0 +1,175 @@
+#!/bin/bash
+# DoN Range student launcher (self-contained, self-updating). Distribute via the LMS.
+#
+# Usage:  donlab <labname> [--no-tmux] [labtainer args...]
+#
+#   By DEFAULT donlab lays the lab out in a single tmux session -- one WINDOW per
+#   host you actually use (hidden/duplicate terminals are skipped), one PANE per
+#   terminal that host was given -- and opens the lab manual in Firefox. This works
+#   over plain SSH with no pop-up windows to arrange.
+#     Ctrl-b n / p  next / previous host      Ctrl-b w   pick a host from a list
+#     Ctrl-b % or " split the current host into more panes
+#     Ctrl-b d      detach (the lab keeps running; re-attach with: tmux attach -t lab-<lab>)
+#   Stop the lab with:  stoplab <lab>
+#
+#   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
+#   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
+set -uo pipefail
+IMODULE_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/main/imodule.tar.enc
+DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/main/donlab
+KEYB64=''   # DONLAB-KEY
+
+# ============================================================================
+# Self-update (runs FIRST, before anything else). Pulls the latest *keyless*
+# donlab published in the imodule repo, grafts THIS machine's local key onto it,
+# and swaps itself in -- atomically, and only after a checksum + sanity check.
+# The key is never uploaded and never leaves this file; the published version has
+# no key. SELF-HEALING: any failure (offline, bad checksum, unwritable, etc.) is
+# swallowed and donlab carries on with the copy already on disk.
+# ============================================================================
+self_update() {
+  [ -n "${DONLAB_NOSELFUPDATE:-}" ] && return 0                 # opt-out / re-exec guard
+  command -v curl >/dev/null 2>&1 || return 0
+  local self dir want got
+  self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" || return 0
+  [ -f "$self" ] && [ -w "$self" ] || return 0                  # can't rewrite -> skip, keep going
+  dir="$(mktemp -d 2>/dev/null)" || return 0
+  if curl -fsSL --max-time 20 "$DONLAB_URL" -o "$dir/new" 2>/dev/null \
+     && curl -fsSL --max-time 20 "$DONLAB_URL.sha256" -o "$dir/sha" 2>/dev/null; then
+    want="$(tr -d '[:space:]' < "$dir/sha" 2>/dev/null)"
+    got="$(sha256sum "$dir/new" 2>/dev/null | awk '{print $1}')"
+    # adopt only a complete, authentic, well-formed donlab
+    if [ -n "$want" ] && [ "$want" = "$got" ] \
+       && head -1 "$dir/new" | grep -q '^#!/bin/bash' \
+       && grep -q '# DONLAB-KEY$' "$dir/new" \
+       && grep -q '^# DONLAB-END$' "$dir/new"; then
+      # graft our in-memory local key onto the freshly fetched keyless logic
+      awk -v k="$KEYB64" '/# DONLAB-KEY$/{print "KEYB64='\''" k "'\''   # DONLAB-KEY"; next} {print}' "$dir/new" > "$dir/merged" 2>/dev/null
+      if [ -s "$dir/merged" ] && grep -q '^# DONLAB-END$' "$dir/merged" && ! cmp -s "$dir/merged" "$self"; then
+        # atomic replace (temp in the same dir as self, then rename)
+        if cp "$dir/merged" "$self.tmp.$$" 2>/dev/null && chmod +x "$self.tmp.$$" 2>/dev/null && mv -f "$self.tmp.$$" "$self" 2>/dev/null; then
+          rm -rf "$dir"
+          exec env DONLAB_NOSELFUPDATE=1 bash "$self" "$@"       # re-run the updated logic, once
+        fi
+        rm -f "$self.tmp.$$" 2>/dev/null
+      fi
+    fi
+  fi
+  rm -rf "$dir" 2>/dev/null
+  return 0
+}
+self_update "$@" || true
+
+# ---- args: pull out our flags, pass the rest through to labtainer ----
+USE_TMUX=1
+PASS=()
+for a in "$@"; do
+  case "$a" in
+    --no-tmux|--gui) USE_TMUX=0 ;;
+    --tmux)          USE_TMUX=1 ;;
+    *)               PASS+=("$a") ;;
+  esac
+done
+[ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; exit 1; }
+LAB="${PASS[0]}"
+
+SHIM=""
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SHIM" ] && rm -rf "$SHIM"' EXIT
+
+# ---- fetch / refresh the encrypted lab bundle (imodule) ----
+CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
+remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
+local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
+if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
+  if curl -fsSL "$IMODULE_URL" -o "$TMP/e"; then
+    if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
+      printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
+      if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
+        IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
+        if [ -x "$IMOD" ] && "$IMOD" "file://$TMP/imodule.tar"; then
+          [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
+        else echo "WARN: imodule install failed; using installed version."; fi
+      else echo "WARN: decrypt failed; using installed version."; fi
+    else echo "WARN: checksum mismatch; using installed version."; fi
+  else echo "WARN: could not fetch imodule; using installed version."; fi
+fi
+
+# ---- locate labtainer and its tree ----
+LT="$(command -v labtainer || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer")"
+[ -x "$LT" ] || { echo "labtainer not found -- add it to PATH or set LABTAINER_DIR."; exit 1; }
+LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
+
+# ---- open the lab manual in a browser (best effort; needs a display) ----
+open_manual() {
+  local m="$LTDIR/labs/$LAB/docs/$LAB.html" b
+  [ -f "$m" ] || return 0
+  [ -n "${DISPLAY:-}" ] || return 0
+  for b in firefox firefox-esr x-www-browser xdg-open; do
+    if command -v "$b" >/dev/null 2>&1; then ("$b" "file://$m" >/dev/null 2>&1 &) ; return 0; fi
+  done
+}
+
+# ---- lay a started lab out in one tmux session (embedded launcher) ----
+lab_tmux() {
+  local SC="$LTDIR/labs/$LAB/config/start.config"
+  [ -f "$SC" ] || { echo "no start.config for '$LAB' -- terminals not laid out."; return 1; }
+  command -v tmux >/dev/null 2>&1 || return 1
+  local SESSION="lab-$LAB"
+  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  local running; running=$(docker ps --format '{{.Names}}')
+  local made=0 cur="" idx=0 key val junk c n full cmd p
+  declare -A TERMS ORDER
+  while read -r key val junk; do
+    case "$key" in
+      CONTAINER) cur="$val"; TERMS[$cur]=1; ORDER[$cur]=$((idx++)) ;;
+      TERMINALS) [ -n "$cur" ] && TERMS[$cur]="$val" ;;
+    esac
+  done < "$SC"
+  for c in $(for k in "${!ORDER[@]}"; do echo "${ORDER[$k]} $k"; done | sort -n | awk '{print $2}'); do
+    n="${TERMS[$c]}"; [ "$n" = "0" ] && continue; [ "$n" = "-1" ] && continue   # hidden host
+    full="$LAB.$c.student"
+    grep -qx "$full" <<<"$running" || continue                                    # not running
+    cmd="docker exec -it $full bash -l"
+    if [ "$made" = 0 ]; then tmux new-session -d -s "$SESSION" -n "$c" "$cmd"
+    else                     tmux new-window  -t "$SESSION"    -n "$c" "$cmd"; fi
+    for ((p=1; p<n; p++)); do
+      tmux split-window -t "$SESSION:$c" "$cmd"
+      tmux select-layout -t "$SESSION:$c" tiled >/dev/null
+    done
+    made=$((made+1))
+  done
+  [ "$made" -gt 0 ] || { echo "no visible terminals for '$LAB' -- is it running?"; return 1; }
+  tmux set -t "$SESSION" mouse on >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
+  # Make pane splits open a shell INSIDE the current window's host (a docker exec into
+  # that container), not a plain shell on the Labtainer host. The host is read live from
+  # the active window's name at split time. Bindings are server-wide; donlab (re)sets them
+  # for the current lab on each launch.
+  tmux bind-key '%'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -h \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
+  tmux bind-key '"'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -v \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
+  tmux select-window -t "$SESSION":0 >/dev/null 2>&1 || true
+  echo "tmux '$SESSION': Ctrl-b n/p = next/prev host, Ctrl-b w = pick a host,"
+  echo "                 Ctrl-b % or \" = split into panes, Ctrl-b d = detach (lab keeps running)."
+  if [ -t 0 ] && [ -t 1 ]; then
+    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$SESSION"; else exec tmux attach -t "$SESSION"; fi
+  else
+    echo "not a terminal -- attach with: tmux attach -t $SESSION"
+  fi
+}
+
+# ---- standard (pop-up terminals) mode ----
+if [ "$USE_TMUX" = 0 ] || ! command -v tmux >/dev/null 2>&1; then
+  [ "$USE_TMUX" = 1 ] && echo "tmux not found; using standard pop-up terminals."
+  open_manual
+  exec "$LT" "${PASS[@]}"
+fi
+
+# ---- tmux mode: suppress the pop-up terminals, start the lab, then lay it out ----
+SHIM="$(mktemp -d)"
+printf '#!/bin/sh\nexit 0\n' > "$SHIM/gnome-terminal"
+cp "$SHIM/gnome-terminal" "$SHIM/xterm"
+chmod +x "$SHIM/gnome-terminal" "$SHIM/xterm"
+PATH="$SHIM:$PATH" "$LT" "${PASS[@]}"
+open_manual
+lab_tmux
+# DONLAB-END
