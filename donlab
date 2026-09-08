@@ -182,6 +182,17 @@ lab_tmux() {
   [ "$made" -gt 0 ] || { echo "no visible terminals for '$LAB' -- is it running?"; return 1; }
   tmux set -t "$SESSION" mouse on >/dev/null 2>&1 || true
   tmux set -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
+  # Force a dark-blue status line + readable tabs and subtle borders, scoped to THIS
+  # session, so our tmux looks right regardless of the host VM's theme. (Pane contents are
+  # the terminal emulator's own colors; this styles tmux's chrome.)
+  tmux set -t "$SESSION" status-style "bg=#00337a,fg=#dceafc" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-left-style "fg=#ffffff,bold" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-right-style "fg=#bcd6f5" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-current-style "bg=#0a58b0,fg=#ffffff,bold" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-style "fg=#cfe0f7" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" message-style "bg=#00337a,fg=#ffffff" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" pane-border-style "fg=#274056" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" pane-active-border-style "fg=#5aa9d6" >/dev/null 2>&1 || true
   # Make pane splits open a shell INSIDE the current window's host (a docker exec into
   # that container), not a plain shell on the Labtainer host. The host is read live from
   # the active window's name at split time. Bindings are server-wide; donlab (re)sets them
