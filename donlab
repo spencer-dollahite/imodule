@@ -15,9 +15,19 @@
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
 set -uo pipefail
-IMODULE_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/main/imodule.tar.enc
-DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/main/donlab
+# Release channel. 'prod' (default, what students get) pulls the fully-tested MAIN branch +
+# the promoted :latest images; 'dev' pulls the rapid DEV branch + :dev images. Flip to 'dev'
+# ONLY on the labtainer VPS / dev box. Persisted across self-updates by the graft below (like
+# the key). Override for one run with: DONLAB_CHANNEL=dev donlab <lab>
+CHANNEL='prod'   # DONLAB-CHANNEL
+CHANNEL="${DONLAB_CHANNEL:-$CHANNEL}"
+[ "$CHANNEL" = "dev" ] && DON_BRANCH=dev || DON_BRANCH=main
+IMODULE_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/imodule.tar.enc
+DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/donlab
 KEYB64=''   # DONLAB-KEY
+# dev channel -> pull the rapid :dev images (our framework honors DON_IMAGE_TAG and retags to
+# :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
+[ "$CHANNEL" = "dev" ] && export DON_IMAGE_TAG=dev
 
 # ============================================================================
 # Self-update (runs FIRST, before anything else). Pulls the latest *keyless*
@@ -43,8 +53,10 @@ self_update() {
        && head -1 "$dir/new" | grep -q '^#!/bin/bash' \
        && grep -q '# DONLAB-KEY$' "$dir/new" \
        && grep -q '^# DONLAB-END$' "$dir/new"; then
-      # graft our in-memory local key onto the freshly fetched keyless logic
-      awk -v k="$KEYB64" '/# DONLAB-KEY$/{print "KEYB64='\''" k "'\''   # DONLAB-KEY"; next} {print}' "$dir/new" > "$dir/merged" 2>/dev/null
+      # graft our in-memory local key AND local channel onto the freshly fetched logic, so both
+      # persist across self-updates (the published donlab ships keyless + CHANNEL='prod').
+      awk -v k="$KEYB64" '/# DONLAB-KEY$/{print "KEYB64='\''" k "'\''   # DONLAB-KEY"; next} {print}' "$dir/new" > "$dir/m1" 2>/dev/null
+      awk -v c="$CHANNEL" '/# DONLAB-CHANNEL$/{print "CHANNEL='\''" c "'\''   # DONLAB-CHANNEL"; next} {print}' "$dir/m1" > "$dir/merged" 2>/dev/null
       if [ -s "$dir/merged" ] && grep -q '^# DONLAB-END$' "$dir/merged" && ! cmp -s "$dir/merged" "$self"; then
         # atomic replace (temp in the same dir as self, then rename)
         if cp "$dir/merged" "$self.tmp.$$" 2>/dev/null && chmod +x "$self.tmp.$$" 2>/dev/null && mv -f "$self.tmp.$$" "$self" 2>/dev/null; then
