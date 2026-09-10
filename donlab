@@ -15,6 +15,7 @@
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
 #   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
 #   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
+#   (env) DONLAB_NO_PULL=1   do not check the registry for updated lab images before starting.
 #   -v, --version   print the donlab version (and build sha) and exit.
 #   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
@@ -32,7 +33,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.5'
+DONLAB_VERSION='1.2.6'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -511,6 +512,38 @@ prune_stale() {
   fi
 }
 prune_stale
+
+# ---- refresh this lab's images from the registry ------------------------------------------
+# Stock Labtainers only consults the registry when an image is MISSING locally: an image that
+# already exists by name is used as-is, forever, and an existing (stopped) container is resumed
+# rather than recreated. So a promoted fix never reaches a box that has already run the lab
+# (seen 2026-09-10: the appliance kept booting the pre-fix Kali image). Before starting, pull
+# each container image of this lab (a no-op when up to date; a few seconds per image). If any
+# image id changed, the lab's existing containers are on the OLD image: drop them so the
+# framework recreates the lab fresh -- and say so, since the previous instance is gone.
+# Offline / registry unreachable: keep going with what is local. Opt out: DONLAB_NO_PULL=1.
+refresh_images() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" reg tag c img before after changed=()
+  [ -z "${DONLAB_NO_PULL:-}" ] || return 0
+  [ -f "$sc" ] || return 0
+  reg="$(awk '/^[[:space:]]*REGISTRY[[:space:]]/{print $2; exit}' "$sc")"; reg="${reg:-ssdollahite}"
+  tag="${DON_IMAGE_TAG:-latest}"
+  step "Checking the registry for updated $LAB images..."
+  for c in $(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc"); do
+    img="$reg/$LAB.$c.student"
+    before="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
+    docker pull -q "$img:$tag" >/dev/null 2>&1 || { echo "    $c: registry unreachable or no image -- using the local copy"; continue; }
+    [ "$tag" = latest ] || docker tag "$img:$tag" "$img:latest" 2>/dev/null || true
+    after="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
+    [ -n "$before" ] && [ "$before" != "$after" ] && changed+=("$c")
+  done
+  [ ${#changed[@]} -gt 0 ] || return 0
+  echo "donlab: $LAB was updated (new images: ${changed[*]}). Resetting the previous instance so the lab"
+  echo "        starts on the new images -- work inside the old containers is not carried over."
+  "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
+  docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
+}
+refresh_images
 
 # ---- lab manual bridge: serve the manual over http://127.0.0.1 so its Check Work / Stop Lab /
 # scenario buttons can reach the local API (a file:// page has no origin to call). The bridge is
