@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.2'
+DONLAB_VERSION='1.2.3'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -144,25 +144,29 @@ ensure_cgroup2() {
   exit 0
 }
 
-# ---- make sure tmux is present (for the clean one-window-per-host layout) ----------------
-# Without tmux the framework opens a pop-up terminal per container, and on this appliance one
-# can grab the whole X display (a black full-screen console). tmux keeps every host in one
-# window instead. Install it if missing; if we can't, fall back to pop-ups (non-fatal).
-ensure_tmux() {
-  command -v tmux >/dev/null 2>&1 && return 0
-  [ "${USE_TMUX:-1}" = 1 ] || return 0                 # honor --no-tmux: don't install
+# ---- make sure the lab helpers (tmux + vim) are present ----------------------------------
+# tmux: without it the framework opens a pop-up terminal per container, and on this appliance one
+# can grab the whole X display (a black full-screen console); tmux keeps every host in one window.
+# vim: the editor the manuals assume -- the appliance ships vi (vim-tiny) only, so install vim
+# proper. Install whatever is missing in one apt transaction; non-fatal (tmux missing -> pop-ups,
+# vim missing -> vi). Honors --no-tmux for tmux; vim is installed regardless.
+ensure_tools() {
+  local want=() p SUDO=""
+  command -v tmux >/dev/null 2>&1 || { [ "${USE_TMUX:-1}" = 1 ] && want+=(tmux); }
+  command -v vim  >/dev/null 2>&1 || want+=(vim)
+  [ ${#want[@]} -gt 0 ] || return 0
   command -v apt-get >/dev/null 2>&1 || return 0       # only know how to install on Debian/Ubuntu
-  local SUDO=""
   if [ "$(id -u)" -ne 0 ]; then
     if sudo -n true 2>/dev/null; then SUDO="sudo -n"; else
-      echo "donlab: tmux is not installed, so labs use pop-up terminals. For the cleaner"
-      echo "        one-window-per-host layout, install it once:  sudo apt-get install -y tmux"
+      echo "donlab: these lab helpers aren't installed: ${want[*]}. Install them once for the best"
+      echo "        experience (tmux = clean multi-pane layout, vim = the manual's editor):"
+      echo "        sudo apt-get install -y ${want[*]}"
       return 0
     fi
   fi
-  run_step "Installing tmux for the multi-pane lab layout" \
-    bash -c "$SUDO apt-get update -qq >/dev/null 2>&1; $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux >/dev/null 2>&1" || true
-  command -v tmux >/dev/null 2>&1 || echo "donlab: could not install tmux; using pop-up terminals."
+  run_step "Installing lab helpers (${want[*]})" \
+    bash -c "$SUDO apt-get update -qq >/dev/null 2>&1; $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${want[*]} >/dev/null 2>&1" || true
+  for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: could not install $p."; done
 }
 
 # ---- update the Labtainers FRAMEWORK via its official updater (donlab --update-labtainers) ----
@@ -601,8 +605,8 @@ show_dead_containers() {
     done
 }
 
-# Prefer the tmux layout: install tmux if it's missing (and the student didn't pass --no-tmux).
-ensure_tmux
+# Install the lab helpers (tmux for the multi-pane layout, vim as the manual's editor) if missing.
+ensure_tools
 
 # ---- standard (pop-up terminals) mode ----
 # Start the lab FIRST; open the manual only once the containers are actually up, so it does
