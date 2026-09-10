@@ -14,6 +14,7 @@
 #
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
 #   -v, --version   print the donlab version (and build sha) and exit.
+#   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
 set -uo pipefail
 # Release channel. 'prod' (default, what students get) pulls the fully-tested MAIN branch +
@@ -28,7 +29,7 @@ DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRAN
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.0'
+DONLAB_VERSION='1.1.1'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -87,15 +88,28 @@ update_labtainers() {
 # no key. SELF-HEALING: any failure (offline, bad checksum, unwritable, etc.) is
 # swallowed and donlab carries on with the copy already on disk.
 # ============================================================================
+# self_update [force] -- fetch the published donlab, graft our local key+channel, replace in
+# place, and re-exec. Called quietly on every run; `donlab -u/--update` calls it with `force`,
+# which is VERBOSE (says what it's doing / why it didn't update) and bypasses the opt-out. Both
+# paths CACHE-BUST the fetch (?cb=epoch): raw.githubusercontent.com caches each URL for minutes,
+# and without this a stale cached copy makes the update silently no-op ("already current").
 self_update() {
-  [ -n "${DONLAB_NOSELFUPDATE:-}" ] && return 0                 # opt-out / re-exec guard
-  command -v curl >/dev/null 2>&1 || return 0
-  local self dir want got
+  local force=""; [ "${1:-}" = force ] && { force=1; shift; }
+  [ -z "$force" ] && [ -n "${DONLAB_NOSELFUPDATE:-}" ] && return 0   # opt-out / re-exec guard
+  if ! command -v curl >/dev/null 2>&1; then
+    [ -n "$force" ] && echo "donlab --update: curl is required but not installed."; return 0
+  fi
+  local self dir want got cb
   self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" || return 0
-  [ -f "$self" ] && [ -w "$self" ] || return 0                  # can't rewrite -> skip, keep going
+  if [ ! -f "$self" ] || [ ! -w "$self" ]; then                 # can't rewrite -> skip, keep going
+    [ -n "$force" ] && echo "donlab --update: $self is not writable. Re-run with sudo, or copy donlab into your home dir first."
+    return 0
+  fi
   dir="$(mktemp -d 2>/dev/null)" || return 0
-  if curl -fsSL --max-time 20 "$DONLAB_URL" -o "$dir/new" 2>/dev/null \
-     && curl -fsSL --max-time 20 "$DONLAB_URL.sha256" -o "$dir/sha" 2>/dev/null; then
+  cb="$(date +%s)"
+  [ -n "$force" ] && step "Checking $DON_BRANCH channel for a newer donlab..."
+  if curl -fsSL --max-time 20 "$DONLAB_URL?cb=$cb" -o "$dir/new" 2>/dev/null \
+     && curl -fsSL --max-time 20 "$DONLAB_URL.sha256?cb=$cb" -o "$dir/sha" 2>/dev/null; then
     want="$(tr -d '[:space:]' < "$dir/sha" 2>/dev/null)"
     got="$(sha256sum "$dir/new" 2>/dev/null | awk '{print $1}')"
     # adopt only a complete, authentic, well-formed donlab
@@ -110,17 +124,40 @@ self_update() {
       if [ -s "$dir/merged" ] && grep -q '^# DONLAB-END$' "$dir/merged" && ! cmp -s "$dir/merged" "$self"; then
         # atomic replace (temp in the same dir as self, then rename)
         if cp "$dir/merged" "$self.tmp.$$" 2>/dev/null && chmod +x "$self.tmp.$$" 2>/dev/null && mv -f "$self.tmp.$$" "$self" 2>/dev/null; then
+          [ -n "$force" ] && step "Fetched a newer donlab; applying and re-launching..."
           rm -rf "$dir"
-          exec env DONLAB_NOSELFUPDATE=1 bash "$self" "$@"       # re-run the updated logic, once
+          # re-run the updated logic once; mark a forced update so the -u handler can confirm it
+          exec env DONLAB_NOSELFUPDATE=1 ${force:+DONLAB_UPDATED=1} bash "$self" "$@"
         fi
         rm -f "$self.tmp.$$" 2>/dev/null
+        [ -n "$force" ] && echo "donlab --update: could not write the new donlab in place."
+      elif [ -n "$force" ]; then
+        : # already current; the -u handler prints the version
       fi
+    elif [ -n "$force" ]; then
+      echo "donlab --update: the downloaded donlab failed validation (checksum/format); not applied."
     fi
+  elif [ -n "$force" ]; then
+    echo "donlab --update: could not download from $DONLAB_URL (network / proxy?)."
   fi
   rm -rf "$dir" 2>/dev/null
   return 0
 }
 self_update "$@" || true
+
+# ---- user-invoked forced update: donlab -u / --update (cache-busted, verbose) ----
+# On a real update, self_update above re-execs us with DONLAB_UPDATED=1; on re-entry we just
+# confirm the new version. Otherwise we force a cache-busted check and report the outcome.
+for _a in "$@"; do case "$_a" in
+  -u|--update)
+    if [ -n "${DONLAB_UPDATED:-}" ]; then
+      echo "donlab is now at $DONLAB_VERSION (channel: $CHANNEL)."; exit 0
+    fi
+    self_update force
+    # reaching here means no newer copy was applied
+    echo "donlab is already up to date ($DONLAB_VERSION, channel: $CHANNEL)."
+    exit 0 ;;
+esac; done
 
 # ---- args: pull out our flags, pass the rest through to labtainer ----
 USE_TMUX=1
@@ -136,6 +173,7 @@ for a in "$@"; do
 done
 if [ "$UPDATE_LT" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
+    echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"; \
     echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; \
     echo "       donlab -v|--version           # print the donlab version"; exit 1; }
   LAB="${PASS[0]}"
