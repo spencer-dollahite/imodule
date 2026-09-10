@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.4'
+DONLAB_VERSION='1.1.5'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -303,6 +303,9 @@ if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
       printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
       if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
         IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
+        # Older appliance releases of imodule open ~/.local/share/labtainers/imodules.txt for
+        # append WITHOUT creating the directory (FileNotFoundError on a fresh box). Pre-create it.
+        mkdir -p "$HOME/.local/share/labtainers" 2>/dev/null || true
         if [ -x "$IMOD" ] && run_step "Installing labs" "$IMOD" "file://$TMP/imodule.tar"; then
           [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
           step "Lab bundle installed."
