@@ -13,6 +13,8 @@
 #   Stop the lab with:  stoplab <lab>
 #
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
+#   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
+#   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
 #   -v, --version   print the donlab version (and build sha) and exit.
 #   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
@@ -30,7 +32,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.4'
+DONLAB_VERSION='1.2.5'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -145,8 +147,9 @@ ensure_cgroup2() {
 }
 
 # ---- make sure the lab helpers (tmux + vim) are present ----------------------------------
-# tmux: without it the framework opens a pop-up terminal per container, and on this appliance one
-# can grab the whole X display (a black full-screen console); tmux keeps every host in one window.
+# tmux: without it the framework opens a pop-up terminal per container; tmux keeps every host in
+# one window. (The appliance's "black full-screen console" was NOT a pop-up: it was the Kali
+# container's agetty on the host's VT -- fixed in the don.kali base, 2026-09-10.)
 # vim: the editor the manuals assume -- the appliance ships vi (vim-tiny) only, so install vim
 # proper. Install whatever is missing in one apt transaction; non-fatal (tmux missing -> pop-ups,
 # vim missing -> vi). Honors --no-tmux for tmux; vim is installed regardless.
@@ -164,6 +167,54 @@ ensure_tools() {
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y ${want[*]} \
     || echo "donlab: couldn't install ${want[*]} automatically. Run once: sudo apt-get update && sudo apt-get install -y ${want[*]}"
   for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi)."; done
+}
+
+# ---- dark desktop (GNOME) -------------------------------------------------------------------
+# The manuals, the tmux chrome and the report tooling are designed dark; the appliance ships
+# GNOME in light mode. Switch the desktop to dark ONCE (marker in $CFG) so a student who later
+# picks light again is never overridden. Only inside a GNOME session with gsettings; never
+# fatal. Opt out with DONLAB_NO_DARK=1. Undo by hand:
+#   gsettings set org.gnome.desktop.interface color-scheme 'default'
+ensure_dark_theme() {
+  local marker="$CFG/.dark-theme-set" cur gtk
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_DARK:-}" ] || return 0
+  [ -f "$marker" ] && return 0
+  command -v gsettings >/dev/null 2>&1 || return 0
+  case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*|*ubuntu*) ;; *) return 0 ;; esac
+  cur="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null || true)"
+  if [ "$cur" != "'prefer-dark'" ]; then
+    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || return 0
+    # GTK3 apps (gnome-terminal, Firefox chrome) follow gtk-theme, not color-scheme: move a stock
+    # Yaru light variant to its dark twin; leave any custom theme alone.
+    gtk="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")"
+    case "$gtk" in
+      Yaru)        gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true ;;
+      Yaru-*-dark) ;;
+      Yaru-*)      gsettings set org.gnome.desktop.interface gtk-theme "$gtk-dark" 2>/dev/null || true ;;
+    esac
+    echo "donlab: switched the desktop to dark mode (once; undo with: gsettings set org.gnome.desktop.interface color-scheme 'default')."
+  fi
+  touch "$marker" 2>/dev/null || true
+}
+
+# ---- natural ("reversed") scrolling (GNOME) -------------------------------------------------
+# Same one-shot pattern as the dark desktop: on first launch flip the mouse and touchpad to
+# natural scrolling (content follows the fingers / wheel, as on a Mac), then never touch it
+# again, so a student who sets it back keeps their choice. Opt out with DONLAB_NO_NATURAL_SCROLL=1.
+# Undo by hand:  gsettings set org.gnome.desktop.peripherals.mouse natural-scroll false
+ensure_natural_scroll() {
+  local marker="$CFG/.natural-scroll-set" d s changed=0
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_NATURAL_SCROLL:-}" ] || return 0
+  [ -f "$marker" ] && return 0
+  command -v gsettings >/dev/null 2>&1 || return 0
+  case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*|*ubuntu*) ;; *) return 0 ;; esac
+  for d in mouse touchpad; do
+    s="org.gnome.desktop.peripherals.$d"
+    [ "$(gsettings get "$s" natural-scroll 2>/dev/null)" = true ] && continue
+    gsettings set "$s" natural-scroll true 2>/dev/null && changed=1
+  done
+  [ "$changed" = 1 ] && echo "donlab: set natural (reversed) scrolling (once; undo with: gsettings set org.gnome.desktop.peripherals.mouse natural-scroll false)."
+  touch "$marker" 2>/dev/null || true
 }
 
 # ---- update the Labtainers FRAMEWORK via its official updater (donlab --update-labtainers) ----
@@ -613,6 +664,8 @@ show_dead_containers() {
 
 # Install the lab helpers (tmux for the multi-pane layout, vim as the manual's editor) if missing.
 ensure_tools
+ensure_dark_theme
+ensure_natural_scroll
 
 # ---- standard (pop-up terminals) mode ----
 # Start the lab FIRST; open the manual only once the containers are actually up, so it does
