@@ -93,9 +93,28 @@ if ! docker ps >/dev/null 2>&1; then
   exit 1
 fi
 
-# ---- locate labtainer and its tree ----
-LT="$(command -v labtainer || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer")"
-[ -x "$LT" ] || { echo "donlab: labtainer not found -- add it to PATH or set LABTAINER_DIR."; exit 1; }
+# ---- locate labtainer and its tree (SELF-HEALING) ----
+# A student never has to configure anything: try PATH, then $LABTAINER_DIR, then the known
+# appliance/install locations, then a bounded search under $HOME. So a fresh box with no env
+# set up still works on a bare `./donlab <lab>`.
+find_labtainer() {
+  local c
+  c="$(command -v labtainer 2>/dev/null)" && [ -x "$c" ] && { echo "$c"; return 0; }
+  for c in       "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer"       "$HOME/labtainer/scripts/labtainer-student/bin/labtainer"       "$HOME/labtainer/trunk/scripts/labtainer-student/bin/labtainer"       "$HOME/Labtainers/scripts/labtainer-student/bin/labtainer"       /home/*/labtainer/scripts/labtainer-student/bin/labtainer       /home/*/labtainer/trunk/scripts/labtainer-student/bin/labtainer       /opt/labtainer/scripts/labtainer-student/bin/labtainer; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  c="$(find "$HOME" -maxdepth 6 -type f -path '*/scripts/labtainer-student/bin/labtainer' 2>/dev/null | head -1)"
+  [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+  return 1
+}
+LT="$(find_labtainer || true)"
+if [ -z "$LT" ] || [ ! -x "$LT" ]; then
+  echo "donlab: could not find your Labtainers install."
+  echo "        Looked on PATH, \$LABTAINER_DIR, ~/labtainer[/trunk], ~/Labtainers, /home/*/labtainer, /opt/labtainer,"
+  echo "        and under $HOME. If it lives elsewhere, set LABTAINER_DIR to the dir containing"
+  echo "        scripts/labtainer-student and re-run ./donlab."
+  exit 1
+fi
 LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
 [ -n "$LTDIR" ] || { echo "donlab: could not locate the Labtainers tree from $LT."; exit 1; }
 
