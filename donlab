@@ -33,7 +33,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.6'
+DONLAB_VERSION='1.2.7'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -528,14 +528,22 @@ refresh_images() {
   [ -f "$sc" ] || return 0
   reg="$(awk '/^[[:space:]]*REGISTRY[[:space:]]/{print $2; exit}' "$sc")"; reg="${reg:-ssdollahite}"
   tag="${DON_IMAGE_TAG:-latest}"
-  step "Checking the registry for updated $LAB images..."
-  for c in $(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc"); do
-    img="$reg/$LAB.$c.student"
+  step "Checking the registry for updated $LAB images (an updated image is downloaded here --"
+  echo "    a rebuilt lab can mean several GB; each host reports as it finishes)."
+  local conts n=0 total
+  conts="$(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc")"; total=$(printf '%s\n' "$conts" | grep -c .)
+  for c in $conts; do
+    n=$((n+1)); img="$reg/$LAB.$c.student"
     before="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
-    docker pull -q "$img:$tag" >/dev/null 2>&1 || { echo "    $c: registry unreachable or no image -- using the local copy"; continue; }
+    echo "    [$n/$total] $c:"
+    # one line per finished layer + docker's final status, so a multi-GB pull is visibly alive
+    docker pull "$img:$tag" 2>&1 | grep --line-buffered -E 'Pull complete|Status:|rror' | sed -u 's/^/      /'
+    if ! docker image inspect "$img:$tag" >/dev/null 2>&1; then echo "      -> registry unreachable or no image; using the local copy"; continue; fi
     [ "$tag" = latest ] || docker tag "$img:$tag" "$img:latest" 2>/dev/null || true
     after="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
-    [ -n "$before" ] && [ "$before" != "$after" ] && changed+=("$c")
+    if [ -n "$before" ] && [ "$before" != "$after" ]; then echo "      -> updated"; changed+=("$c")
+    elif [ -z "$before" ]; then echo "      -> downloaded"
+    else echo "      -> up to date"; fi
   done
   [ ${#changed[@]} -gt 0 ] || return 0
   echo "donlab: $LAB was updated (new images: ${changed[*]}). Resetting the previous instance so the lab"
