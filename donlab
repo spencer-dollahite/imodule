@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.6'
+DONLAB_VERSION='1.2.0'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -56,6 +56,68 @@ run_step() {
   else
     printf '==> %s\n' "$msg"; "$@"; return $?
   fi
+}
+
+# ---- cgroup v2 self-heal (course appliance) ----------------------------------------------
+# The stock NPS Labtainers appliance boots the LEGACY cgroup v1 hierarchy. Modern lab
+# containers run systemd >= 256 (the Kali red-team host today; Ubuntu 26.04 bases soon), and
+# that systemd REFUSES to start under cgroup v1 -- PID 1 exits and the container dies at once.
+# cgroup v2 is safe for every current base (Ubuntu 24.04's systemd 255 runs on either). This
+# is a course-specific appliance, so donlab just converts it: stage the kernel flag and reboot
+# once, no prompt. One-time; a v2 host is a no-op. Opt out for a run with DONLAB_NO_CGROUP_FIX=1.
+host_cgroup_v2() { [ "$(stat -fc '%T' /sys/fs/cgroup 2>/dev/null)" = cgroup2fs ]; }
+ensure_cgroup2() {
+  local m0="${XDG_CONFIG_HOME:-$HOME/.config}/don-range/.cgroup2-reboot"
+  if host_cgroup_v2; then rm -f "$m0" 2>/dev/null; return 0; fi
+  if [ -n "${DONLAB_NO_CGROUP_FIX:-}" ]; then
+    echo "donlab: NOTE this host uses the legacy cgroup v1 layout; modern lab containers"
+    echo "        (Kali red-team; Ubuntu 26.04 bases) need cgroup v2 and will not start."
+    echo "        Unset DONLAB_NO_CGROUP_FIX to let donlab convert the host automatically."
+    return 0
+  fi
+  local grub=/etc/default/grub SUDO="" marker
+  [ "$(id -u)" -eq 0 ] || SUDO="sudo"
+  marker="${XDG_CONFIG_HOME:-$HOME/.config}/don-range/.cgroup2-reboot"
+  echo "=================================================================="
+  echo " donlab: this appliance boots the OLD cgroup v1 layout, which the"
+  echo " modern lab containers (e.g. the Kali red-team host) cannot run on."
+  echo " Converting it to cgroup v2 -- a ONE-TIME change that needs a reboot."
+  echo "=================================================================="
+  if [ ! -f "$grub" ]; then
+    echo "donlab: no $grub here, so donlab can't auto-convert. Set the kernel argument"
+    echo "        systemd.unified_cgroup_hierarchy=1 and reboot, then re-run ./donlab."
+    return 0
+  fi
+  if grep -q 'systemd.unified_cgroup_hierarchy=1' "$grub"; then
+    # Already staged. If we already rebooted once and it still didn't take, don't loop.
+    if [ -f "$marker" ]; then
+      echo "donlab: cgroup v2 is staged in GRUB but the running kernel is still v1 after a"
+      echo "        reboot -- this appliance may use a different bootloader. Modern containers"
+      echo "        will not start until the host is cgroup v2. Continuing anyway."
+      return 0
+    fi
+    echo "donlab: cgroup v2 is staged but not yet active; rebooting to apply."
+  else
+    # Stage the flag: edit an existing GRUB_CMDLINE_LINUX_DEFAULT, else add the line.
+    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub"; then
+      $SUDO sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1 /' "$grub" 2>/dev/null || true
+    else
+      echo 'GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1"' | $SUDO tee -a "$grub" >/dev/null 2>&1 || true
+    fi
+    if ! grep -q 'systemd.unified_cgroup_hierarchy=1' "$grub"; then
+      echo "donlab: could not update $grub (need sudo?). Run this once, then re-run ./donlab:"
+      echo "        sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"systemd.unified_cgroup_hierarchy=1 /' $grub && sudo update-grub && sudo reboot"
+      return 0
+    fi
+    $SUDO update-grub >/dev/null 2>&1 \
+      || $SUDO grub-mkconfig  -o /boot/grub/grub.cfg  >/dev/null 2>&1 \
+      || $SUDO grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1 || true
+    echo "donlab: applied. Rebooting once now; re-run ./donlab <lab> when it comes back."
+  fi
+  mkdir -p "$(dirname "$marker")" 2>/dev/null && : > "$marker" 2>/dev/null || true
+  sync
+  $SUDO reboot 2>/dev/null || echo "donlab: please reboot the appliance, then re-run ./donlab."
+  exit 0
 }
 
 # ---- update the Labtainers FRAMEWORK via its official updater (donlab --update-labtainers) ----
@@ -198,6 +260,9 @@ if ! docker ps >/dev/null 2>&1; then
   echo "        try:  sudo systemctl start docker    (and log out/in if you were just added to the group)"
   exit 1
 fi
+
+# Convert a legacy cgroup v1 host to v2 before doing any lab work (reboots once if needed).
+ensure_cgroup2
 
 # ---- locate labtainer and its tree (SELF-HEALING) ----
 # A student never has to configure anything: try PATH, then $LABTAINER_DIR, then the known
