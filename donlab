@@ -13,6 +13,7 @@
 #   Stop the lab with:  stoplab <lab>
 #
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
+#   -v, --version   print the donlab version (and build sha) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
 set -uo pipefail
 # Release channel. 'prod' (default, what students get) pulls the fully-tested MAIN branch +
@@ -24,6 +25,15 @@ CHANNEL="${DONLAB_CHANNEL:-$CHANNEL}"
 [ "$CHANNEL" = "dev" ] && DON_BRANCH=dev || DON_BRANCH=main
 IMODULE_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/imodule.tar.enc
 DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/donlab
+
+# Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
+# the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
+DONLAB_VERSION='1.0.0'
+for _a in "$@"; do case "$_a" in
+  -v|--version)
+    echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
+    exit 0 ;;
+esac; done
 KEYB64=''   # DONLAB-KEY
 # dev channel -> pull the rapid :dev images (our framework honors DON_IMAGE_TAG and retags to
 # :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
@@ -126,7 +136,8 @@ for a in "$@"; do
 done
 if [ "$UPDATE_LT" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
-    echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; exit 1; }
+    echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; \
+    echo "       donlab -v|--version           # print the donlab version"; exit 1; }
   LAB="${PASS[0]}"
 fi
 
