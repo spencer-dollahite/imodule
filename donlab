@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.0'
+DONLAB_VERSION='1.2.1'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -88,31 +88,55 @@ ensure_cgroup2() {
     echo "        systemd.unified_cgroup_hierarchy=1 and reboot, then re-run ./donlab."
     return 0
   fi
-  if grep -q 'systemd.unified_cgroup_hierarchy=1' "$grub"; then
-    # Already staged. If we already rebooted once and it still didn't take, don't loop.
-    if [ -f "$marker" ]; then
-      echo "donlab: cgroup v2 is staged in GRUB but the running kernel is still v1 after a"
-      echo "        reboot -- this appliance may use a different bootloader. Modern containers"
-      echo "        will not start until the host is cgroup v2. Continuing anyway."
-      return 0
-    fi
-    echo "donlab: cgroup v2 is staged but not yet active; rebooting to apply."
+  # A v1-PINNED appliance carries systemd.unified_cgroup_hierarchy=0 and/or
+  # systemd.legacy_systemd_cgroup_controller=1 on the kernel cmdline (see /proc/cmdline). Those
+  # FORCE v1 and override a plain "=1", so we must STRIP them from every place GRUB builds the
+  # cmdline: /etc/default/grub AND any /etc/default/grub.d/*.cfg drop-in -- then add =1.
+  grub_pins_v1() { grep -qsE 'unified_cgroup_hierarchy=0|legacy_systemd_cgroup_controller=1' "$grub" /etc/default/grub.d/*.cfg 2>/dev/null; }
+  grub_ok() { grep -qs 'unified_cgroup_hierarchy=1' "$grub" && ! grub_pins_v1; }
+  echo "donlab: /proc/cmdline is:"; sed 's/^/          /' /proc/cmdline 2>/dev/null
+  if grub_ok && [ -f "$marker" ]; then
+    echo "donlab: GRUB already requests cgroup v2 and pins nothing to v1, yet the running kernel"
+    echo "        is still v1 after a reboot. This host may boot a pre-generated grub.cfg or a"
+    echo "        different loader. Modern containers won't start until it is v2. Continuing anyway."
+    return 0
+  fi
+  if grub_ok; then
+    echo "donlab: cgroup v2 is set but not yet active; rebooting to apply."
   else
-    # Stage the flag: edit an existing GRUB_CMDLINE_LINUX_DEFAULT, else add the line.
-    if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' "$grub"; then
-      $SUDO sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1 /' "$grub" 2>/dev/null || true
-    else
-      echo 'GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1"' | $SUDO tee -a "$grub" >/dev/null 2>&1 || true
-    fi
-    if ! grep -q 'systemd.unified_cgroup_hierarchy=1' "$grub"; then
-      echo "donlab: could not update $grub (need sudo?). Run this once, then re-run ./donlab:"
-      echo "        sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"systemd.unified_cgroup_hierarchy=1 /' $grub && sudo update-grub && sudo reboot"
+    local tmp; tmp="$(mktemp)"
+    # normalize /etc/default/grub: strip the cgroup tokens on both CMDLINE vars, add =1 to _DEFAULT
+    awk '
+      /^GRUB_CMDLINE_LINUX(_DEFAULT)?=/{
+        eq=index($0,"="); key=substr($0,1,eq-1); val=substr($0,eq+1); q="";
+        if (val ~ /^".*"$/){ q="\""; val=substr(val,2,length(val)-2) }
+        gsub(/systemd\.unified_cgroup_hierarchy=[^ ]*/,"",val);
+        gsub(/systemd\.legacy_systemd_cgroup_controller=[^ ]*/,"",val);
+        gsub(/  +/," ",val); sub(/^ +/,"",val); sub(/ +$/,"",val);
+        if (key=="GRUB_CMDLINE_LINUX_DEFAULT") val=(val==""?"":val" ")"systemd.unified_cgroup_hierarchy=1";
+        print key"="q val q; next
+      }
+      {print}
+    ' "$grub" > "$tmp" 2>/dev/null
+    grep -q 'unified_cgroup_hierarchy=1' "$tmp" || printf 'GRUB_CMDLINE_LINUX_DEFAULT="systemd.unified_cgroup_hierarchy=1"\n' >> "$tmp"
+    $SUDO cp "$tmp" "$grub" 2>/dev/null; rm -f "$tmp"
+    # strip the v1 pin from any grub.d drop-in (do NOT add =1 there -- the main file carries it)
+    for dd in /etc/default/grub.d/*.cfg; do
+      [ -f "$dd" ] || continue
+      grep -qE 'unified_cgroup_hierarchy=0|legacy_systemd_cgroup_controller=1' "$dd" || continue
+      $SUDO sed -i -E 's/systemd\.unified_cgroup_hierarchy=0//g; s/systemd\.legacy_systemd_cgroup_controller=1//g' "$dd" 2>/dev/null || true
+    done
+    if ! grub_ok; then
+      echo "donlab: couldn't update the GRUB config (need sudo?). Run these, then re-run ./donlab:"
+      echo "        sudo sed -i -E 's/systemd\\.unified_cgroup_hierarchy=[^\" ]*//g; s/systemd\\.legacy_systemd_cgroup_controller=[^\" ]*//g' /etc/default/grub"
+      echo "        sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"/GRUB_CMDLINE_LINUX_DEFAULT=\"systemd.unified_cgroup_hierarchy=1 /' /etc/default/grub"
+      echo "        sudo update-grub && sudo reboot"
       return 0
     fi
     $SUDO update-grub >/dev/null 2>&1 \
       || $SUDO grub-mkconfig  -o /boot/grub/grub.cfg  >/dev/null 2>&1 \
       || $SUDO grub2-mkconfig -o /boot/grub2/grub.cfg >/dev/null 2>&1 || true
-    echo "donlab: applied. Rebooting once now; re-run ./donlab <lab> when it comes back."
+    echo "donlab: set cgroup v2 in GRUB and removed the v1 pin. Rebooting once; re-run ./donlab after."
   fi
   mkdir -p "$(dirname "$marker")" 2>/dev/null && : > "$marker" 2>/dev/null || true
   sync
