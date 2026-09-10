@@ -16,6 +16,8 @@
 #   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
 #   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
 #   (env) DONLAB_NO_PULL=1   do not check the registry for updated lab images before starting.
+#   ARM hosts (Apple Silicon run natively): donlab pulls the lab's :arm64 images and installs
+#   them under the plain image name; a lab with no ARM build published is refused up front.
 #   -v, --version   print the donlab version (and build sha) and exit.
 #   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
@@ -33,16 +35,25 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.8'
+DONLAB_VERSION='1.3.0'
 for _a in "$@"; do case "$_a" in
   -v|--version)
-    echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
+    echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
     exit 0 ;;
 esac; done
 KEYB64=''   # DONLAB-KEY
 # dev channel -> pull the rapid :dev images (our framework honors DON_IMAGE_TAG and retags to
 # :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
 [ "$CHANNEL" = "dev" ] && export DON_IMAGE_TAG=dev
+
+# ---- host architecture -------------------------------------------------------------------
+# On an ARM host (an Apple Silicon Mac running the VM NATIVELY under UTM Virtualize or
+# VirtualBox for Arm) the registry's default images are x86_64 and cannot execute. ARM builds
+# are published under an architecture tag (:arm64, or :<channel>-arm64) and donlab installs
+# them under the PLAIN image name (<lab>.<host>.student). The framework treats a plain-named
+# image as a local build: it never pulls the x86 image over it and needs no base-image label.
+# x86_64 hosts (the stock appliance, the emulated VM) are unaffected.
+case "$(uname -m 2>/dev/null)" in aarch64|arm64) HOST_ARCH=arm64 ;; *) HOST_ARCH=x86_64 ;; esac
 
 # ---- progress helpers: clear feedback on slow steps; safe/quiet when not a TTY ----
 _is_tty() { [ -t 1 ]; }
@@ -523,28 +534,64 @@ prune_stale
 # framework recreates the lab fresh -- and say so, since the previous instance is gone.
 # Offline / registry unreachable: keep going with what is local. Opt out: DONLAB_NO_PULL=1.
 refresh_images() {
-  local sc="$LTDIR/labs/$LAB/config/start.config" reg tag c img before after changed=()
-  [ -z "${DONLAB_NO_PULL:-}" ] || return 0
+  local sc="$LTDIR/labs/$LAB/config/start.config" reg tag c img before after changed=() missing=()
   [ -f "$sc" ] || return 0
   reg="$(awk '/^[[:space:]]*REGISTRY[[:space:]]/{print $2; exit}' "$sc")"; reg="${reg:-ssdollahite}"
   tag="${DON_IMAGE_TAG:-latest}"
-  step "Checking the registry for updated $LAB images (an updated image is downloaded here --"
-  echo "    a rebuilt lab can mean several GB; each host reports as it finishes)."
   local conts n=0 total
   conts="$(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc")"; total=$(printf '%s\n' "$conts" | grep -c .)
-  for c in $conts; do
-    n=$((n+1)); img="$reg/$LAB.$c.student"
-    before="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
-    echo "    [$n/$total] $c:"
-    # one line per finished layer + docker's final status, so a multi-GB pull is visibly alive
-    docker pull "$img:$tag" 2>&1 | grep --line-buffered -E 'Pull complete|Status:|rror' | sed -u 's/^/      /'
-    if ! docker image inspect "$img:$tag" >/dev/null 2>&1; then echo "      -> registry unreachable or no image; using the local copy"; continue; fi
-    [ "$tag" = latest ] || docker tag "$img:$tag" "$img:latest" 2>/dev/null || true
-    after="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
-    if [ -n "$before" ] && [ "$before" != "$after" ]; then echo "      -> updated"; changed+=("$c")
-    elif [ -z "$before" ]; then echo "      -> downloaded"
-    else echo "      -> up to date"; fi
-  done
+  if [ "$HOST_ARCH" = arm64 ]; then
+    # ARM host: pull each host's :arm64 (or :<tag>-arm64) build and install it under the plain
+    # image name. Even with DONLAB_NO_PULL set, verify every host HAS an arm64 image locally --
+    # otherwise the framework would fetch the x86 image and the containers die on exec.
+    local atag plain arch; [ "$tag" = latest ] && atag=arm64 || atag="$tag-arm64"
+    if [ -z "${DONLAB_NO_PULL:-}" ]; then
+      step "ARM host: checking the registry for $LAB ARM images (:$atag)..."
+    else
+      step "ARM host: verifying the installed $LAB ARM images (registry check skipped)..."
+    fi
+    for c in $conts; do
+      n=$((n+1)); img="$reg/$LAB.$c.student"; plain="$LAB.$c.student"
+      before="$(docker images -q "$plain:latest" 2>/dev/null | head -1)"
+      echo "    [$n/$total] $c:"
+      if [ -z "${DONLAB_NO_PULL:-}" ]; then
+        docker pull "$img:$atag" 2>&1 | grep --line-buffered -E 'Pull complete|Status:|rror' | sed -u 's/^/      /'
+        if docker image inspect "$img:$atag" >/dev/null 2>&1; then
+          docker tag "$img:$atag" "$plain:latest" 2>/dev/null || true
+        fi
+      fi
+      after="$(docker images -q "$plain:latest" 2>/dev/null | head -1)"
+      arch="$(docker image inspect -f '{{.Architecture}}' "$plain:latest" 2>/dev/null || true)"
+      if [ -z "$after" ]; then echo "      -> no ARM build in the registry and none installed"; missing+=("$c")
+      elif [ "$arch" != arm64 ]; then echo "      -> installed image is $arch, not arm64"; missing+=("$c")
+      elif [ -n "$before" ] && [ "$before" != "$after" ]; then echo "      -> updated"; changed+=("$c")
+      elif [ -z "$before" ]; then echo "      -> downloaded"
+      else echo "      -> up to date"; fi
+    done
+    if [ ${#missing[@]} -gt 0 ]; then
+      echo "donlab: this is an ARM host and $LAB has no ARM image for: ${missing[*]}."
+      echo "        The registry's x86_64 images cannot run here. Ask the course staff for an ARM"
+      echo "        build of $LAB, or run this lab in the x86_64 (emulated) appliance instead."
+      exit 1
+    fi
+  else
+    [ -z "${DONLAB_NO_PULL:-}" ] || return 0
+    step "Checking the registry for updated $LAB images (an updated image is downloaded here --"
+    echo "    a rebuilt lab can mean several GB; each host reports as it finishes)."
+    for c in $conts; do
+      n=$((n+1)); img="$reg/$LAB.$c.student"
+      before="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
+      echo "    [$n/$total] $c:"
+      # one line per finished layer + docker's final status, so a multi-GB pull is visibly alive
+      docker pull "$img:$tag" 2>&1 | grep --line-buffered -E 'Pull complete|Status:|rror' | sed -u 's/^/      /'
+      if ! docker image inspect "$img:$tag" >/dev/null 2>&1; then echo "      -> registry unreachable or no image; using the local copy"; continue; fi
+      [ "$tag" = latest ] || docker tag "$img:$tag" "$img:latest" 2>/dev/null || true
+      after="$(docker images -q "$img:latest" 2>/dev/null | head -1)"
+      if [ -n "$before" ] && [ "$before" != "$after" ]; then echo "      -> updated"; changed+=("$c")
+      elif [ -z "$before" ]; then echo "      -> downloaded"
+      else echo "      -> up to date"; fi
+    done
+  fi
   [ ${#changed[@]} -gt 0 ] || return 0
   echo "donlab: $LAB was updated (new images: ${changed[*]}). Resetting the previous instance so the lab"
   echo "        starts on the new images -- work inside the old containers is not carried over."
