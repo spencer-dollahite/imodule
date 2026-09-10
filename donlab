@@ -29,7 +29,7 @@ DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRAN
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.1'
+DONLAB_VERSION='1.1.2'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -126,8 +126,8 @@ self_update() {
         if cp "$dir/merged" "$self.tmp.$$" 2>/dev/null && chmod +x "$self.tmp.$$" 2>/dev/null && mv -f "$self.tmp.$$" "$self" 2>/dev/null; then
           [ -n "$force" ] && step "Fetched a newer donlab; applying and re-launching..."
           rm -rf "$dir"
-          # re-run the updated logic once; mark a forced update so the -u handler can confirm it
-          exec env DONLAB_NOSELFUPDATE=1 ${force:+DONLAB_UPDATED=1} bash "$self" "$@"
+          # re-run the updated logic once; DONLAB_UPDATED lets the -u handler confirm the new version
+          exec env DONLAB_NOSELFUPDATE=1 DONLAB_UPDATED=1 bash "$self" "$@"
         fi
         rm -f "$self.tmp.$$" 2>/dev/null
         [ -n "$force" ] && echo "donlab --update: could not write the new donlab in place."
