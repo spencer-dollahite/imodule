@@ -28,7 +28,7 @@ DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRAN
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.0.0'
+DONLAB_VERSION='1.1.0'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -163,22 +163,61 @@ find_labtainer() {
   [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
   return 1
 }
-LT="$(find_labtainer || true)"
-if [ -z "$LT" ] || [ ! -x "$LT" ]; then
-  echo "donlab: could not find your Labtainers install."
-  echo "        Looked on PATH, \$LABTAINER_DIR, ~/labtainer[/trunk], ~/Labtainers, /home/*/labtainer, /opt/labtainer,"
-  echo "        and under $HOME. If it lives elsewhere, set LABTAINER_DIR to the dir containing"
-  echo "        scripts/labtainer-student and re-run ./donlab."
+# A real Labtainers tree carries these two, and the framework keys off exactly them:
+# start.py fatally opens $LABTAINER_DIR/README.md, and the `labtainer` wrapper execs a
+# RELATIVE bin/start.py from scripts/labtainer-student. (labs/ is created below, so it is
+# NOT part of the signature -- a fresh appliance may not have it yet.)
+is_lt_tree() { [ -n "$1" ] && [ -f "$1/README.md" ] && [ -d "$1/scripts/labtainer-student" ]; }
+
+# ---- resolve the Labtainers tree ($LTDIR), grounded in the framework's own contract ----
+# ORDER MATTERS. The stock appliance already exports a CORRECT $LABTAINER_DIR (that is why
+# `labtainer` works when you run it by hand); donlab must TRUST it, never clobber it with a
+# path guessed from where the binary happens to sit. Only when the env is unset or does not
+# point at a real tree do we go looking -- and anything we derive is validated with
+# is_lt_tree before we accept it, so a PATH shim or an odd layout can't hand us /home/student.
+LTDIR=""
+if [ -n "${LABTAINER_DIR:-}" ] && is_lt_tree "$LABTAINER_DIR"; then
+  LTDIR="$(cd "$LABTAINER_DIR" 2>/dev/null && pwd -P || true)"
+fi
+if [ -z "$LTDIR" ]; then
+  LT="$(find_labtainer || true)"
+  if [ -n "$LT" ] && [ -x "$LT" ]; then
+    d="$(cd "$(dirname "$LT")" 2>/dev/null && pwd -P || true)"
+    # strip the known .../scripts/labtainer-student/bin suffix, else start from the bin dir,
+    # then walk upward until we hit a directory that actually IS a Labtainers tree.
+    case "$d" in
+      */scripts/labtainer-student/bin) cand="${d%/scripts/labtainer-student/bin}" ;;
+      *) cand="$d" ;;
+    esac
+    if is_lt_tree "$cand"; then
+      LTDIR="$cand"
+    else
+      p="$d"
+      while [ -n "$p" ] && [ "$p" != "/" ]; do
+        if is_lt_tree "$p"; then LTDIR="$p"; break; fi
+        p="$(dirname "$p")"
+      done
+    fi
+  fi
+fi
+if [ -z "$LTDIR" ]; then
+  for cand in "$HOME/labtainer" "$HOME/labtainer/trunk" "$HOME/Labtainers" \
+              /opt/labtainer /home/*/labtainer /home/*/labtainer/trunk; do
+    if is_lt_tree "$cand"; then LTDIR="$(cd "$cand" 2>/dev/null && pwd -P || true)"; [ -n "$LTDIR" ] && break; fi
+  done
+fi
+if [ -z "$LTDIR" ]; then
+  echo "donlab: could not find a valid Labtainers install."
+  echo "        A valid tree has README.md and scripts/labtainer-student/ at its root."
+  echo "        Looked at \$LABTAINER_DIR, PATH, ~/labtainer[/trunk], ~/Labtainers,"
+  echo "        /home/*/labtainer and /opt/labtainer. If it lives elsewhere, set"
+  echo "        LABTAINER_DIR to that directory and re-run ./donlab."
   exit 1
 fi
-LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
-[ -n "$LTDIR" ] || { echo "donlab: could not locate the Labtainers tree from $LT."; exit 1; }
 
-# ---- orientation: Labtainers commands expect to run from the student-scripts dir, and the
-# framework + the manual bridge key off $LABTAINER_DIR. Derive both from where `labtainer`
-# actually lives (authoritative, even if the student's env var is wrong or unset), export
-# LABTAINER_DIR, and auto-cd into scripts/labtainer-student if donlab was started elsewhere --
-# so a wrong working directory can't make the lab fail. ----
+# ---- orientation: export the validated tree and ensure labs/ exists. The `labtainer`
+# wrapper execs a RELATIVE bin/start.py, so donlab also auto-cds into scripts/labtainer-student
+# below -- a wrong working directory (e.g. the student's home) can't make the lab fail. ----
 export LABTAINER_DIR="$LTDIR"
 # A fresh appliance may not have the labs dir yet, and imodule/labtainer must target
 # $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
