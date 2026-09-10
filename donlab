@@ -13,6 +13,8 @@
 #   Stop the lab with:  stoplab <lab>
 #
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
+#   -v, --version   print the donlab version (and build sha) and exit.
+#   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
 set -uo pipefail
 # Release channel. 'prod' (default, what students get) pulls the fully-tested MAIN branch +
@@ -22,12 +24,62 @@ set -uo pipefail
 CHANNEL='prod'   # DONLAB-CHANNEL
 CHANNEL="${DONLAB_CHANNEL:-$CHANNEL}"
 [ "$CHANNEL" = "dev" ] && DON_BRANCH=dev || DON_BRANCH=main
-IMODULE_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/imodule.tar.enc
-DONLAB_URL=https://raw.githubusercontent.com/spencer-dollahite/imodule/$DON_BRANCH/donlab
+DON_REPO=spencer-dollahite/imodule
+IMODULE_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule.tar.enc
+DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
+
+# Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
+# the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
+DONLAB_VERSION='1.1.5'
+for _a in "$@"; do case "$_a" in
+  -v|--version)
+    echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
+    exit 0 ;;
+esac; done
 KEYB64=''   # DONLAB-KEY
 # dev channel -> pull the rapid :dev images (our framework honors DON_IMAGE_TAG and retags to
 # :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
 [ "$CHANNEL" = "dev" ] && export DON_IMAGE_TAG=dev
+
+# ---- progress helpers: clear feedback on slow steps; safe/quiet when not a TTY ----
+_is_tty() { [ -t 1 ]; }
+step() { printf '==> %s\n' "$*"; }
+# Run a quiet command with a spinner (on a TTY) or a plain line; show its output only on failure.
+run_step() {
+  local msg="$1"; shift
+  if _is_tty; then
+    local log; log="$(mktemp)"; ( "$@" ) >"$log" 2>&1 & local pid=$! s='|/-\\' i=0
+    printf '==> %s ' "$msg"
+    while kill -0 "$pid" 2>/dev/null; do printf '\b%s' "${s:i++%4:1}"; sleep 0.2; done
+    wait "$pid"; local rc=$?; printf '\b%s\n' "$( [ "$rc" -eq 0 ] && printf 'done' || printf 'FAILED' )"
+    [ "$rc" -ne 0 ] && sed 's/^/    /' "$log"; rm -f "$log"; return "$rc"
+  else
+    printf '==> %s\n' "$msg"; "$@"; return $?
+  fi
+}
+
+# ---- update the Labtainers FRAMEWORK via its official updater (donlab --update-labtainers) ----
+# Best first step on an older appliance: pulls the latest Labtainers release (which repopulates
+# labs/ and ships the newest framework fixes). Non-interactive; runs the NPS updater as-is.
+update_labtainers() {
+  local u
+  for u in "$LTDIR/setup_scripts/update-labtainer.sh" \
+           "$LTDIR/../setup_scripts/update-labtainer.sh" \
+           "$LTDIR/trunk/setup_scripts/update-labtainer.sh"; do
+    if [ -f "$u" ]; then
+      step "Updating the Labtainers framework via its official updater:"
+      echo "    $u"
+      echo "    (downloads the latest Labtainers release + baseline images -- can take a few minutes)"
+      ( cd "${LS_DIR:-$LTDIR}" 2>/dev/null || cd "$LTDIR" || exit 1; bash "$u" )
+      local rc=$?
+      if [ "$rc" -eq 0 ]; then step "Labtainers updated. Now run:  ./donlab <lab>"
+      else step "Labtainers updater exited with status $rc (see output above)."; fi
+      return "$rc"
+    fi
+  done
+  step "Could not find setup_scripts/update-labtainer.sh under $LTDIR -- update Labtainers manually."
+  return 1
+}
 
 # ============================================================================
 # Self-update (runs FIRST, before anything else). Pulls the latest *keyless*
@@ -37,15 +89,39 @@ KEYB64=''   # DONLAB-KEY
 # no key. SELF-HEALING: any failure (offline, bad checksum, unwritable, etc.) is
 # swallowed and donlab carries on with the copy already on disk.
 # ============================================================================
+# self_update [force] -- fetch the published donlab, graft our local key+channel, replace in
+# place, and re-exec. Called quietly on every run; `donlab -u/--update` calls it with `force`,
+# which is VERBOSE (says what it's doing / why it didn't update) and bypasses the opt-out.
+# FRESHNESS: raw.githubusercontent.com branch URLs sit behind a 5-minute CDN cache that IGNORES
+# query strings, so right after a publish a stale copy (and a stale-but-matching .sha256) makes
+# the update silently no-op. So we resolve the branch HEAD through the GitHub API (not CDN
+# cached) and fetch by commit sha -- immutable, always exact -- falling back to the branch URL
+# only if the API is unreachable.
 self_update() {
-  [ -n "${DONLAB_NOSELFUPDATE:-}" ] && return 0                 # opt-out / re-exec guard
-  command -v curl >/dev/null 2>&1 || return 0
-  local self dir want got
+  local force=""; [ "${1:-}" = force ] && { force=1; shift; }
+  [ -z "$force" ] && [ -n "${DONLAB_NOSELFUPDATE:-}" ] && return 0   # opt-out / re-exec guard
+  if ! command -v curl >/dev/null 2>&1; then
+    [ -n "$force" ] && echo "donlab --update: curl is required but not installed."; return 0
+  fi
+  local self dir want got ref src at
   self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")" || return 0
-  [ -f "$self" ] && [ -w "$self" ] || return 0                  # can't rewrite -> skip, keep going
+  if [ ! -f "$self" ] || [ ! -w "$self" ]; then                 # can't rewrite -> skip, keep going
+    [ -n "$force" ] && echo "donlab --update: $self is not writable. Re-run with sudo, or copy donlab into your home dir first."
+    return 0
+  fi
   dir="$(mktemp -d 2>/dev/null)" || return 0
-  if curl -fsSL --max-time 20 "$DONLAB_URL" -o "$dir/new" 2>/dev/null \
-     && curl -fsSL --max-time 20 "$DONLAB_URL.sha256" -o "$dir/sha" 2>/dev/null; then
+  # branch HEAD commit via the API (fresh), then fetch at that sha (immutable); else branch URL
+  ref="$(curl -fsSL --max-time 10 -H 'Accept: application/vnd.github+json' \
+          "https://api.github.com/repos/$DON_REPO/commits/$DON_BRANCH" 2>/dev/null \
+        | grep -m1 -oE '"sha": *"[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}' || true)"
+  if [ -n "$ref" ]; then
+    src="https://raw.githubusercontent.com/$DON_REPO/$ref/donlab"; at="@${ref:0:7}"
+  else
+    src="$DONLAB_URL"; at="(branch tip; may lag a few minutes)"
+  fi
+  [ -n "$force" ] && step "Checking the $DON_BRANCH channel for a newer donlab $at..."
+  if curl -fsSL --max-time 20 "$src" -o "$dir/new" 2>/dev/null \
+     && curl -fsSL --max-time 20 "$src.sha256" -o "$dir/sha" 2>/dev/null; then
     want="$(tr -d '[:space:]' < "$dir/sha" 2>/dev/null)"
     got="$(sha256sum "$dir/new" 2>/dev/null | awk '{print $1}')"
     # adopt only a complete, authentic, well-formed donlab
@@ -60,50 +136,59 @@ self_update() {
       if [ -s "$dir/merged" ] && grep -q '^# DONLAB-END$' "$dir/merged" && ! cmp -s "$dir/merged" "$self"; then
         # atomic replace (temp in the same dir as self, then rename)
         if cp "$dir/merged" "$self.tmp.$$" 2>/dev/null && chmod +x "$self.tmp.$$" 2>/dev/null && mv -f "$self.tmp.$$" "$self" 2>/dev/null; then
+          [ -n "$force" ] && step "Fetched a newer donlab; applying and re-launching..."
           rm -rf "$dir"
-          exec env DONLAB_NOSELFUPDATE=1 bash "$self" "$@"       # re-run the updated logic, once
+          # re-run the updated logic once; DONLAB_UPDATED lets the -u handler confirm the new version
+          exec env DONLAB_NOSELFUPDATE=1 DONLAB_UPDATED=1 bash "$self" "$@"
         fi
         rm -f "$self.tmp.$$" 2>/dev/null
+        [ -n "$force" ] && echo "donlab --update: could not write the new donlab in place."
+      elif [ -n "$force" ]; then
+        : # already current; the -u handler prints the version
       fi
+    elif [ -n "$force" ]; then
+      echo "donlab --update: the downloaded donlab failed validation (checksum/format); not applied."
     fi
+  elif [ -n "$force" ]; then
+    echo "donlab --update: could not download from $DONLAB_URL (network / proxy?)."
   fi
   rm -rf "$dir" 2>/dev/null
   return 0
 }
 self_update "$@" || true
 
+# ---- user-invoked forced update: donlab -u / --update (cache-busted, verbose) ----
+# On a real update, self_update above re-execs us with DONLAB_UPDATED=1; on re-entry we just
+# confirm the new version. Otherwise we force a cache-busted check and report the outcome.
+for _a in "$@"; do case "$_a" in
+  -u|--update)
+    if [ -n "${DONLAB_UPDATED:-}" ]; then
+      echo "donlab is now at $DONLAB_VERSION (channel: $CHANNEL)."; exit 0
+    fi
+    self_update force
+    # reaching here means no newer copy was applied
+    echo "donlab is already up to date ($DONLAB_VERSION, channel: $CHANNEL)."
+    exit 0 ;;
+esac; done
+
 # ---- args: pull out our flags, pass the rest through to labtainer ----
 USE_TMUX=1
+UPDATE_LT=0
 PASS=()
 for a in "$@"; do
   case "$a" in
     --no-tmux|--gui) USE_TMUX=0 ;;
     --tmux)          USE_TMUX=1 ;;
+    --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
   esac
 done
-[ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; exit 1; }
-LAB="${PASS[0]}"
-
-SHIM=""
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SHIM" ] && rm -rf "$SHIM"' EXIT
-
-# ---- fetch / refresh the encrypted lab bundle (imodule) ----
-CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
-remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
-local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
-if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
-  if curl -fsSL "$IMODULE_URL" -o "$TMP/e"; then
-    if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
-      printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
-      if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
-        IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
-        if [ -x "$IMOD" ] && "$IMOD" "file://$TMP/imodule.tar"; then
-          [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
-        else echo "WARN: imodule install failed; using installed version."; fi
-      else echo "WARN: decrypt failed; using installed version."; fi
-    else echo "WARN: checksum mismatch; using installed version."; fi
-  else echo "WARN: could not fetch imodule; using installed version."; fi
+if [ "$UPDATE_LT" != 1 ]; then
+  [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
+    echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"; \
+    echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; \
+    echo "       donlab -v|--version           # print the donlab version"; exit 1; }
+  LAB="${PASS[0]}"
 fi
 
 # ---- preflight: the things every lab needs ----
@@ -114,24 +199,122 @@ if ! docker ps >/dev/null 2>&1; then
   exit 1
 fi
 
-# ---- locate labtainer and its tree ----
-LT="$(command -v labtainer || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer")"
-[ -x "$LT" ] || { echo "donlab: labtainer not found -- add it to PATH or set LABTAINER_DIR."; exit 1; }
-LTDIR="$(cd "$(dirname "$LT")/../../.." 2>/dev/null && pwd || true)"
-[ -n "$LTDIR" ] || { echo "donlab: could not locate the Labtainers tree from $LT."; exit 1; }
+# ---- locate labtainer and its tree (SELF-HEALING) ----
+# A student never has to configure anything: try PATH, then $LABTAINER_DIR, then the known
+# appliance/install locations, then a bounded search under $HOME. So a fresh box with no env
+# set up still works on a bare `./donlab <lab>`.
+find_labtainer() {
+  local c
+  c="$(command -v labtainer 2>/dev/null)" && [ -x "$c" ] && { echo "$c"; return 0; }
+  for c in       "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/labtainer"       "$HOME/labtainer/scripts/labtainer-student/bin/labtainer"       "$HOME/labtainer/trunk/scripts/labtainer-student/bin/labtainer"       "$HOME/Labtainers/scripts/labtainer-student/bin/labtainer"       /home/*/labtainer/scripts/labtainer-student/bin/labtainer       /home/*/labtainer/trunk/scripts/labtainer-student/bin/labtainer       /opt/labtainer/scripts/labtainer-student/bin/labtainer; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  c="$(find "$HOME" -maxdepth 6 -type f -path '*/scripts/labtainer-student/bin/labtainer' 2>/dev/null | head -1)"
+  [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+  return 1
+}
+# A real Labtainers tree carries these two, and the framework keys off exactly them:
+# start.py fatally opens $LABTAINER_DIR/README.md, and the `labtainer` wrapper execs a
+# RELATIVE bin/start.py from scripts/labtainer-student. (labs/ is created below, so it is
+# NOT part of the signature -- a fresh appliance may not have it yet.)
+is_lt_tree() { [ -n "$1" ] && [ -f "$1/README.md" ] && [ -d "$1/scripts/labtainer-student" ]; }
 
-# ---- orientation: Labtainers commands expect to run from the student-scripts dir, and the
-# framework + the manual bridge key off $LABTAINER_DIR. Derive both from where `labtainer`
-# actually lives (authoritative, even if the student's env var is wrong or unset), export
-# LABTAINER_DIR, and auto-cd into scripts/labtainer-student if donlab was started elsewhere --
-# so a wrong working directory can't make the lab fail. ----
+# ---- resolve the Labtainers tree ($LTDIR), grounded in the framework's own contract ----
+# ORDER MATTERS. The stock appliance already exports a CORRECT $LABTAINER_DIR (that is why
+# `labtainer` works when you run it by hand); donlab must TRUST it, never clobber it with a
+# path guessed from where the binary happens to sit. Only when the env is unset or does not
+# point at a real tree do we go looking -- and anything we derive is validated with
+# is_lt_tree before we accept it, so a PATH shim or an odd layout can't hand us /home/student.
+LTDIR=""; LT=""
+if [ -n "${LABTAINER_DIR:-}" ] && is_lt_tree "$LABTAINER_DIR"; then
+  LTDIR="$(cd "$LABTAINER_DIR" 2>/dev/null && pwd -P || true)"
+fi
+if [ -z "$LTDIR" ]; then
+  LT="$(find_labtainer || true)"
+  if [ -n "$LT" ] && [ -x "$LT" ]; then
+    d="$(cd "$(dirname "$LT")" 2>/dev/null && pwd -P || true)"
+    # strip the known .../scripts/labtainer-student/bin suffix, else start from the bin dir,
+    # then walk upward until we hit a directory that actually IS a Labtainers tree.
+    case "$d" in
+      */scripts/labtainer-student/bin) cand="${d%/scripts/labtainer-student/bin}" ;;
+      *) cand="$d" ;;
+    esac
+    if is_lt_tree "$cand"; then
+      LTDIR="$cand"
+    else
+      p="$d"
+      while [ -n "$p" ] && [ "$p" != "/" ]; do
+        if is_lt_tree "$p"; then LTDIR="$p"; break; fi
+        p="$(dirname "$p")"
+      done
+    fi
+  fi
+fi
+if [ -z "$LTDIR" ]; then
+  for cand in "$HOME/labtainer" "$HOME/labtainer/trunk" "$HOME/Labtainers" \
+              /opt/labtainer /home/*/labtainer /home/*/labtainer/trunk; do
+    if is_lt_tree "$cand"; then LTDIR="$(cd "$cand" 2>/dev/null && pwd -P || true)"; [ -n "$LTDIR" ] && break; fi
+  done
+fi
+if [ -z "$LTDIR" ]; then
+  echo "donlab: could not find a valid Labtainers install."
+  echo "        A valid tree has README.md and scripts/labtainer-student/ at its root."
+  echo "        Looked at \$LABTAINER_DIR, PATH, ~/labtainer[/trunk], ~/Labtainers,"
+  echo "        /home/*/labtainer and /opt/labtainer. If it lives elsewhere, set"
+  echo "        LABTAINER_DIR to that directory and re-run ./donlab."
+  exit 1
+fi
+
+# ---- orientation: export the validated tree and ensure labs/ exists. The `labtainer`
+# wrapper execs a RELATIVE bin/start.py, so donlab also auto-cds into scripts/labtainer-student
+# below -- a wrong working directory (e.g. the student's home) can't make the lab fail. ----
 export LABTAINER_DIR="$LTDIR"
+# The `labtainer` binary we invoke is ALWAYS the one inside the validated tree, whichever way
+# the tree was found (a trusted env sets no $LT; a PATH shim could point elsewhere).
+LT="$LTDIR/scripts/labtainer-student/bin/labtainer"
+[ -x "$LT" ] || { echo "donlab: $LT is missing or not executable -- is this a complete Labtainers install?"; exit 1; }
+# A fresh appliance may not have the labs dir yet, and imodule/labtainer must target
+# $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
+mkdir -p "$LTDIR/labs" 2>/dev/null || true
+
+# framework-update mode: `donlab --update-labtainers` -- do it and exit (needs $LTDIR/$LS_DIR).
+if [ "$UPDATE_LT" = 1 ]; then update_labtainers; exit $?; fi
 LS_DIR="$LTDIR/scripts/labtainer-student"
 if [ -d "$LS_DIR" ]; then
   if [ "$(pwd -P 2>/dev/null)" != "$(cd "$LS_DIR" 2>/dev/null && pwd -P)" ]; then
     cd "$LS_DIR" || { echo "donlab: could not cd to $LS_DIR"; exit 1; }
     echo "donlab: oriented to \$LABTAINER_DIR=$LTDIR (working from scripts/labtainer-student)"
   fi
+fi
+
+
+SHIM=""
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SHIM" ] && rm -rf "$SHIM"' EXIT
+
+# ---- fetch / refresh the encrypted lab bundle (imodule) ----
+CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
+step "Checking for the latest lab bundle..."
+remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
+local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
+if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
+  step "Downloading the lab bundle (this can take a minute)..."
+  if { if _is_tty; then curl -fL --progress-bar "$IMODULE_URL" -o "$TMP/e"; else curl -fsSL "$IMODULE_URL" -o "$TMP/e"; fi; }; then
+    if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
+      printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
+      if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
+        IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
+        # Older appliance releases of imodule open ~/.local/share/labtainers/imodules.txt for
+        # append WITHOUT creating the directory (FileNotFoundError on a fresh box). Pre-create it.
+        mkdir -p "$HOME/.local/share/labtainers" 2>/dev/null || true
+        if [ -x "$IMOD" ] && run_step "Installing labs" "$IMOD" "file://$TMP/imodule.tar"; then
+          [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
+          step "Lab bundle installed."
+        else echo "WARN: imodule install failed; using installed version."; fi
+      else echo "WARN: decrypt failed; using installed version."; fi
+    else echo "WARN: checksum mismatch; using installed version."; fi
+  else echo "WARN: could not fetch imodule; using installed version."; fi
+else
+  step "Lab bundle is already up to date."
 fi
 
 # ---- prune stale per-container files left by a container RENAME ----
@@ -279,6 +462,8 @@ run_lab() {   # $1 = optional PATH prefix (the tmux gnome-terminal shim)
   else                     PYTHONUNBUFFERED=1                "$LT" "${PASS[@]}" 2>&1 | tee "$LT_LOG"; fi
 }
 start_lab() {  # $1 = optional PATH prefix
+  step "Starting $LAB -- the FIRST launch builds/pulls this lab's container images and can take"
+  echo "    several minutes. It is working even when quiet; live output follows."
   run_lab "${1:-}"
   lab_running && return 0
   local nets stale n l
