@@ -33,7 +33,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.2.7'
+DONLAB_VERSION='1.2.8'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -550,6 +550,11 @@ refresh_images() {
   echo "        starts on the new images -- work inside the old containers is not carried over."
   "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
   docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
+  # ...and the lab's networks (NETWORK names in start.config, lowercased by the framework), so
+  # the fresh start does not log "Already exists! Not creating <net> subnet" for each of them.
+  local net; for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do
+    docker network rm "$net" >/dev/null 2>&1 || true
+  done
 }
 refresh_images
 
@@ -667,7 +672,11 @@ run_lab() {   # $1 = optional PATH prefix (the tmux gnome-terminal shim)
 # A previous instance left half-started: containers/subnets exist but aren't parameterized, so
 # the framework refuses and says to use -r. Containers can be "up" yet unusable, so lab_running
 # alone is NOT success -- check for this too.
-needs_reset() { grep -qiE 'not parameterized|restart this lab with the .-r.|Already exists! Not creating' "$LT_LOG" 2>/dev/null; }
+# A leftover subnet ("Already exists! Not creating ... subnet") is NOT by itself a failed start:
+# the framework logs it and carries on, and the lab comes up fine. Treating it as one made donlab
+# restart a lab that had just started (seen on the appliance right after an image refresh).
+# It is still used below to know WHICH networks to clear when the lab really did not come up.
+needs_reset() { grep -qiE 'not parameterized|restart this lab with the .-r.' "$LT_LOG" 2>/dev/null; }
 start_lab() {  # $1 = optional PATH prefix
   step "Starting $LAB -- the FIRST launch builds/pulls this lab's container images and can take"
   echo "    several minutes. It is working even when quiet; live output follows."
