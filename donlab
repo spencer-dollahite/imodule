@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.5'
+DONLAB_VERSION='1.1.6'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -474,14 +474,30 @@ start_lab() {  # $1 = optional PATH prefix
     for n in $nets;  do echo "donlab: clearing a leftover network ('$n') that was blocking the start"; docker network rm "$n" >/dev/null 2>&1 || true; done
     run_lab "${1:-}"
   fi
-  lab_running || echo "donlab: the lab did not start -- see the messages above (try: stoplab $LAB, then run donlab again)."
+  if ! lab_running; then
+    echo "donlab: the lab did not start -- see the messages above (try: stoplab $LAB, then run donlab again)."
+    show_dead_containers
+  fi
+}
+# After a failed start, show which of this lab's containers are NOT up and the tail of each
+# one's log -- a container that died right after launch is otherwise invisible to the student.
+show_dead_containers() {
+  local line name status
+  docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | grep -E "^$LAB\.[^.]*\.student\b" \
+  | while IFS=$'\t' read -r name status; do
+      case "$status" in Up*) continue ;; esac
+      echo "donlab: container $name is not running ($status). Last log lines:"
+      docker logs --tail 15 "$name" 2>&1 | sed 's/^/    | /'
+    done
 }
 
 # ---- standard (pop-up terminals) mode ----
+# Start the lab FIRST; open the manual only once the containers are actually up, so it does
+# not pop over the terminal while Docker is still pulling and starting things.
 if [ "$USE_TMUX" = 0 ] || ! command -v tmux >/dev/null 2>&1; then
   [ "$USE_TMUX" = 1 ] && echo "tmux not found; using standard pop-up terminals."
-  open_manual
   start_lab ""
+  if lab_running; then open_manual; fi
   exit 0
 fi
 
@@ -491,7 +507,7 @@ printf '#!/bin/sh\nexit 0\n' > "$SHIM/gnome-terminal"
 cp "$SHIM/gnome-terminal" "$SHIM/xterm"
 chmod +x "$SHIM/gnome-terminal" "$SHIM/xterm"
 start_lab "$SHIM"
-open_manual
-# Only lay out tmux if the lab actually came up; start_lab already explained any failure.
-if lab_running; then lab_tmux; fi
+# Only open the manual / lay out tmux if the lab actually came up; start_lab already explained
+# any failure (and listed any container that died).
+if lab_running; then open_manual; lab_tmux; fi
 # DONLAB-END
