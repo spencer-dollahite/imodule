@@ -30,7 +30,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.1.3'
+DONLAB_VERSION='1.1.4'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -225,7 +225,7 @@ is_lt_tree() { [ -n "$1" ] && [ -f "$1/README.md" ] && [ -d "$1/scripts/labtaine
 # path guessed from where the binary happens to sit. Only when the env is unset or does not
 # point at a real tree do we go looking -- and anything we derive is validated with
 # is_lt_tree before we accept it, so a PATH shim or an odd layout can't hand us /home/student.
-LTDIR=""
+LTDIR=""; LT=""
 if [ -n "${LABTAINER_DIR:-}" ] && is_lt_tree "$LABTAINER_DIR"; then
   LTDIR="$(cd "$LABTAINER_DIR" 2>/dev/null && pwd -P || true)"
 fi
@@ -269,6 +269,10 @@ fi
 # wrapper execs a RELATIVE bin/start.py, so donlab also auto-cds into scripts/labtainer-student
 # below -- a wrong working directory (e.g. the student's home) can't make the lab fail. ----
 export LABTAINER_DIR="$LTDIR"
+# The `labtainer` binary we invoke is ALWAYS the one inside the validated tree, whichever way
+# the tree was found (a trusted env sets no $LT; a PATH shim could point elsewhere).
+LT="$LTDIR/scripts/labtainer-student/bin/labtainer"
+[ -x "$LT" ] || { echo "donlab: $LT is missing or not executable -- is this a complete Labtainers install?"; exit 1; }
 # A fresh appliance may not have the labs dir yet, and imodule/labtainer must target
 # $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
 mkdir -p "$LTDIR/labs" 2>/dev/null || true
