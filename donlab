@@ -29,6 +29,46 @@ KEYB64=''   # DONLAB-KEY
 # :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
 [ "$CHANNEL" = "dev" ] && export DON_IMAGE_TAG=dev
 
+# ---- progress helpers: clear feedback on slow steps; safe/quiet when not a TTY ----
+_is_tty() { [ -t 1 ]; }
+step() { printf '==> %s\n' "$*"; }
+# Run a quiet command with a spinner (on a TTY) or a plain line; show its output only on failure.
+run_step() {
+  local msg="$1"; shift
+  if _is_tty; then
+    local log; log="$(mktemp)"; ( "$@" ) >"$log" 2>&1 & local pid=$! s='|/-\\' i=0
+    printf '==> %s ' "$msg"
+    while kill -0 "$pid" 2>/dev/null; do printf '\b%s' "${s:i++%4:1}"; sleep 0.2; done
+    wait "$pid"; local rc=$?; printf '\b%s\n' "$( [ "$rc" -eq 0 ] && printf 'done' || printf 'FAILED' )"
+    [ "$rc" -ne 0 ] && sed 's/^/    /' "$log"; rm -f "$log"; return "$rc"
+  else
+    printf '==> %s\n' "$msg"; "$@"; return $?
+  fi
+}
+
+# ---- update the Labtainers FRAMEWORK via its official updater (donlab --update-labtainers) ----
+# Best first step on an older appliance: pulls the latest Labtainers release (which repopulates
+# labs/ and ships the newest framework fixes). Non-interactive; runs the NPS updater as-is.
+update_labtainers() {
+  local u
+  for u in "$LTDIR/setup_scripts/update-labtainer.sh" \
+           "$LTDIR/../setup_scripts/update-labtainer.sh" \
+           "$LTDIR/trunk/setup_scripts/update-labtainer.sh"; do
+    if [ -f "$u" ]; then
+      step "Updating the Labtainers framework via its official updater:"
+      echo "    $u"
+      echo "    (downloads the latest Labtainers release + baseline images -- can take a few minutes)"
+      ( cd "${LS_DIR:-$LTDIR}" 2>/dev/null || cd "$LTDIR" || exit 1; bash "$u" )
+      local rc=$?
+      if [ "$rc" -eq 0 ]; then step "Labtainers updated. Now run:  ./donlab <lab>"
+      else step "Labtainers updater exited with status $rc (see output above)."; fi
+      return "$rc"
+    fi
+  done
+  step "Could not find setup_scripts/update-labtainer.sh under $LTDIR -- update Labtainers manually."
+  return 1
+}
+
 # ============================================================================
 # Self-update (runs FIRST, before anything else). Pulls the latest *keyless*
 # donlab published in the imodule repo, grafts THIS machine's local key onto it,
@@ -74,16 +114,21 @@ self_update "$@" || true
 
 # ---- args: pull out our flags, pass the rest through to labtainer ----
 USE_TMUX=1
+UPDATE_LT=0
 PASS=()
 for a in "$@"; do
   case "$a" in
     --no-tmux|--gui) USE_TMUX=0 ;;
     --tmux)          USE_TMUX=1 ;;
+    --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
   esac
 done
-[ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; exit 1; }
-LAB="${PASS[0]}"
+if [ "$UPDATE_LT" != 1 ]; then
+  [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
+    echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; exit 1; }
+  LAB="${PASS[0]}"
+fi
 
 # ---- preflight: the things every lab needs ----
 command -v docker >/dev/null 2>&1 || { echo "donlab: docker is not installed or not on your PATH."; exit 1; }
@@ -127,6 +172,9 @@ export LABTAINER_DIR="$LTDIR"
 # A fresh appliance may not have the labs dir yet, and imodule/labtainer must target
 # $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
 mkdir -p "$LTDIR/labs" 2>/dev/null || true
+
+# framework-update mode: `donlab --update-labtainers` -- do it and exit (needs $LTDIR/$LS_DIR).
+if [ "$UPDATE_LT" = 1 ]; then update_labtainers; exit $?; fi
 LS_DIR="$LTDIR/scripts/labtainer-student"
 if [ -d "$LS_DIR" ]; then
   if [ "$(pwd -P 2>/dev/null)" != "$(cd "$LS_DIR" 2>/dev/null && pwd -P)" ]; then
@@ -141,20 +189,25 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SHIM" ] && rm -rf "$SHIM"' EXIT
 
 # ---- fetch / refresh the encrypted lab bundle (imodule) ----
 CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
+step "Checking for the latest lab bundle..."
 remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
 local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
 if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
-  if curl -fsSL "$IMODULE_URL" -o "$TMP/e"; then
+  step "Downloading the lab bundle (this can take a minute)..."
+  if { if _is_tty; then curl -fL --progress-bar "$IMODULE_URL" -o "$TMP/e"; else curl -fsSL "$IMODULE_URL" -o "$TMP/e"; fi; }; then
     if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
       printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
       if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
         IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
-        if [ -x "$IMOD" ] && "$IMOD" "file://$TMP/imodule.tar"; then
+        if [ -x "$IMOD" ] && run_step "Installing labs" "$IMOD" "file://$TMP/imodule.tar"; then
           [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
+          step "Lab bundle installed."
         else echo "WARN: imodule install failed; using installed version."; fi
       else echo "WARN: decrypt failed; using installed version."; fi
     else echo "WARN: checksum mismatch; using installed version."; fi
   else echo "WARN: could not fetch imodule; using installed version."; fi
+else
+  step "Lab bundle is already up to date."
 fi
 
 # ---- prune stale per-container files left by a container RENAME ----
@@ -302,6 +355,8 @@ run_lab() {   # $1 = optional PATH prefix (the tmux gnome-terminal shim)
   else                     PYTHONUNBUFFERED=1                "$LT" "${PASS[@]}" 2>&1 | tee "$LT_LOG"; fi
 }
 start_lab() {  # $1 = optional PATH prefix
+  step "Starting $LAB -- the FIRST launch builds/pulls this lab's container images and can take"
+  echo "    several minutes. It is working even when quiet; live output follows."
   run_lab "${1:-}"
   lab_running && return 0
   local nets stale n l
