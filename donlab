@@ -13,6 +13,11 @@
 #   Stop the lab with:  stoplab <lab>
 #
 #   --no-tmux   use Labtainers' standard pop-up terminals instead of tmux.
+#   --no-i3     stay in the current desktop. By default donlab is opinionated: lab work happens in
+#               the i3 tiling session. Run from XFCE/GNOME it installs i3 if needed, makes i3 your
+#               login session, and reboots ONCE; the first i3 login opens a quick-start window in
+#               the Labtainers student directory. (env) DONLAB_NO_I3=1 does the same permanently.
+#   cdlab       shell helper donlab adds to ~/.bashrc: cd to the Labtainers student directory.
 #   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
 #   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
 #   (env) DONLAB_NO_WALLPAPER=1   do not set the NPS-logo-on-black desktop wallpaper on first launch.
@@ -36,7 +41,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.1'
+DONLAB_VERSION='1.3.12'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -170,6 +175,13 @@ ensure_tools() {
   local want=() p SUDO=""
   command -v tmux >/dev/null 2>&1 || { [ "${USE_TMUX:-1}" = 1 ] && want+=(tmux); }
   command -v vim  >/dev/null 2>&1 || want+=(vim)
+  command -v xclip >/dev/null 2>&1 || want+=(xclip)   # bridge tmux selection -> X clipboard
+  command -v spice-vdagent >/dev/null 2>&1 || want+=(spice-vdagent)  # UTM/Mac host <-> guest clipboard
+  command -v clipmenud >/dev/null 2>&1 || want+=(clipmenu)            # keep clipboard after the source app closes
+  # picom: a compositor so gnome-terminal transparency renders under i3 (XFCE has its own).
+  if [ "${XDG_CURRENT_DESKTOP:-}" = i3 ] || pgrep -x i3 >/dev/null 2>&1; then
+    command -v picom >/dev/null 2>&1 || want+=(picom)
+  fi
   [ ${#want[@]} -gt 0 ] || return 0
   command -v apt-get >/dev/null 2>&1 || return 0       # only know how to install on Debian/Ubuntu
   [ "$(id -u)" -ne 0 ] && SUDO="sudo"
@@ -182,7 +194,226 @@ ensure_tools() {
   for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi)."; done
 }
 
-# ---- dark desktop (GNOME) -------------------------------------------------------------------
+# ---- which desktop are we in? (i3 first-class, then XFCE, GNOME, other) -----------------------
+# Single source of truth so every tweak applies the RIGHT thing per session. XDG_CURRENT_DESKTOP
+# first, then a process sniff as a fallback (i3 / xfce4-session / gnome-shell).
+detect_desktop() {
+  case "${XDG_CURRENT_DESKTOP:-}" in
+    *i3*) echo i3; return ;; *XFCE*) echo xfce; return ;; *GNOME*|*ubuntu*|*Unity*) echo gnome; return ;;
+  esac
+  if pgrep -x i3 >/dev/null 2>&1; then echo i3
+  elif pgrep -x xfwm4 >/dev/null 2>&1 || pgrep -x xfce4-session >/dev/null 2>&1; then echo xfce
+  elif pgrep -x gnome-shell >/dev/null 2>&1; then echo gnome
+  else echo other; fi
+}
+
+# ---- i3, opinionated ---------------------------------------------------------------------------
+# Lab work happens in i3: the manual tiles beside the terminal, everything is keyboard-driven, and
+# it is what the FAQ and the walkthroughs assume. When donlab runs inside some OTHER desktop
+# session (the appliance boots into XFCE by default) it installs i3 if needed, writes the DoN Range
+# i3 config for this user, makes i3 the login session every way a display manager looks it up
+# (lightdm user-session + autologin-session, AccountsService, ~/.dmrc), stages a one-time
+# quick-start window, and reboots -- once (marker in $CFG). If the session is still not i3 after
+# that (a greeter that ignores the setting), donlab says so and carries on in the current desktop.
+# Opt out: --no-i3 or DONLAB_NO_I3=1. Undo: Super+Shift+e, pick another session at the login
+# screen; sudo rm /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf to make that permanent.
+I3_CFG_STAMP="# managed by donlab (i3 config v1)"
+i3_config_text() {   # the appliance's /etc/i3/config, with donlab's startup hook; $1 = startup script
+  cat <<I3
+$I3_CFG_STAMP -- delete this line to keep your own edits (donlab then leaves the file alone)
+set \$mod Mod4
+floating_modifier \$mod
+font pango:DejaVu Sans Mono 10
+
+# --- policy parity with the desktop sessions (i3 does not run XDG autostart) ---
+exec --no-startup-id xset s off -dpms
+# Lab containers display their GUI apps on this X server; grant local clients access so
+# Firefox-in-a-container does not fail with "cannot connect to display :0" under i3.
+exec --no-startup-id sh -c 'xhost +local: >/dev/null 2>&1 || true'
+exec --no-startup-id picom -b --backend xrender
+exec --no-startup-id sh -c 'for f in $CFG/nps-logo.png /usr/share/backgrounds/don-range/nps-logo.png; do [ -f "\$f" ] && { feh --image-bg black --bg-center "\$f"; break; }; done'
+exec --no-startup-id sh -c 'M=\$(xrandr | awk "/ connected/{print \\\$1; exit}"); [ -n "\$M" ] && xrandr --output "\$M" --mode 1920x1080 2>/dev/null || true'
+# first terminal (shows the one-time quick start after donlab switched you to i3)
+exec --no-startup-id $1
+
+# --- launchers ---
+bindsym \$mod+Return exec $1 --terminal
+bindsym \$mod+w exec firefox
+bindsym \$mod+d exec dmenu_run
+bindsym \$mod+Shift+q kill
+
+# --- focus / move ---
+bindsym \$mod+Left focus left
+bindsym \$mod+Down focus down
+bindsym \$mod+Up focus up
+bindsym \$mod+Right focus right
+bindsym \$mod+Shift+Left move left
+bindsym \$mod+Shift+Down move down
+bindsym \$mod+Shift+Up move up
+bindsym \$mod+Shift+Right move right
+
+# --- split / layout ---
+bindsym \$mod+h split h
+bindsym \$mod+v split v
+bindsym \$mod+f fullscreen toggle
+bindsym \$mod+Shift+space floating toggle
+bindsym \$mod+space focus mode_toggle
+
+# --- resize (or drag the border between two tiles with the mouse) ---
+bindsym \$mod+r mode "resize"
+mode "resize" {
+    bindsym Left  resize shrink width 5 px or 5 ppt
+    bindsym Down  resize grow height 5 px or 5 ppt
+    bindsym Up    resize shrink height 5 px or 5 ppt
+    bindsym Right resize grow width 5 px or 5 ppt
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+
+# --- workspaces ---
+bindsym \$mod+1 workspace number 1
+bindsym \$mod+2 workspace number 2
+bindsym \$mod+3 workspace number 3
+bindsym \$mod+4 workspace number 4
+bindsym \$mod+Shift+1 move container to workspace number 1
+bindsym \$mod+Shift+2 move container to workspace number 2
+bindsym \$mod+Shift+3 move container to workspace number 3
+bindsym \$mod+Shift+4 move container to workspace number 4
+
+# --- session ---
+bindsym \$mod+Shift+c reload
+bindsym \$mod+Shift+r restart
+bindsym \$mod+Shift+e exec "i3-nagbar -t warning -m 'Exit i3 (return to the login screen)?' -B 'Yes' 'i3-msg exit'"
+
+# --- dark status bar (donlab writes ~/.config/i3status/config: Disk / Mem / clock) ---
+bar {
+    status_command i3status
+    position bottom
+    colors {
+        background #111111
+        statusline #eff0f1
+        separator  #545b64
+        focused_workspace  #000001 #000001 #ffffff
+        active_workspace   #31363b #31363b #eff0f1
+        inactive_workspace #111111 #111111 #cfe0f7
+    }
+}
+I3
+}
+write_i3_files() {   # startup hook + quick-start rc; $1 = Labtainers student dir. Idempotent.
+  local st="$CFG/i3-startup.sh" rc="$CFG/i3-welcome.rc" cfg="$HOME/.config/i3/config"
+  cat > "$st" <<EOS
+#!/bin/bash
+# donlab: opened by i3 at login (and by Super+Enter). Shows the one-time quick start after donlab
+# switched this login to i3; otherwise it is just a terminal.
+CFG="$CFG"
+for T in gnome-terminal xfce4-terminal x-terminal-emulator xterm; do command -v "\$T" >/dev/null 2>&1 && break; T=""; done
+[ -n "\$T" ] || exit 0
+if [ "\${1:-}" != --terminal ] && [ -f "\$CFG/i3-welcome-pending" ]; then
+  rm -f "\$CFG/i3-welcome-pending"
+  case "\$T" in
+    gnome-terminal) exec gnome-terminal --title="DoN Range: i3 quick start" -- bash --rcfile "\$CFG/i3-welcome.rc" ;;
+    xfce4-terminal) exec xfce4-terminal -T "DoN Range: i3 quick start" -e "bash --rcfile \$CFG/i3-welcome.rc" ;;
+    *)              exec "\$T" -e bash --rcfile "\$CFG/i3-welcome.rc" ;;
+  esac
+fi
+exec "\$T"
+EOS
+  chmod +x "$st"
+  cat > "$rc" <<EOR
+# donlab: one-time i3 quick start (an interactive shell in the Labtainers student directory)
+[ -f "\$HOME/.bashrc" ] && . "\$HOME/.bashrc"
+cd "$1" 2>/dev/null || cd "\$HOME"
+cat <<'TXT'
+
+  DoN Range -- i3 quick start          (donlab switched your login session to i3)
+
+  Super = the Windows / Command key.
+
+    Super+Enter    new terminal            Super+w         Firefox (the lab manual)
+    Super+d        run a program by name   Super+f         fullscreen on / off
+    Super+Arrows   move focus              Super+Shift+q   close the focused window
+    Super+1 .. 4   switch workspace        Super+Shift+1..4  send window to workspace
+    Super+r        resize mode (arrows, Esc)   drag a border with the mouse also resizes
+    Ctrl-b w       inside a lab: pick a host from tmux's window list
+
+  Start a lab:     donlab <labname>      (this shell is already in the Labtainers student dir)
+  Get back here:   cdlab
+  Prefer XFCE?     Super+Shift+e, then pick "Xfce Session" at the login screen.
+                   Run donlab with --no-i3 (or export DONLAB_NO_I3=1) so it stops switching you.
+  Full FAQ:        the bottom of any lab manual.
+
+TXT
+EOR
+  mkdir -p "$(dirname "$cfg")"
+  if [ ! -f "$cfg" ] || grep -qs "^# managed by donlab (i3 config" "$cfg"; then
+    if [ ! -f "$cfg" ] || ! grep -qs "^$I3_CFG_STAMP" "$cfg"; then
+      i3_config_text "$st" > "$cfg"
+      command -v i3-msg >/dev/null 2>&1 && i3-msg reload >/dev/null 2>&1 || true
+    fi
+  else
+    echo "donlab: keeping your own ~/.config/i3/config (add 'exec --no-startup-id $st' to it for the quick start)."
+  fi
+}
+ensure_cdlab() {   # `cdlab` -> the Labtainers student directory; ~/.bashrc, once
+  local rc="$HOME/.bashrc" ls_dir="$LTDIR/scripts/labtainer-student"
+  grep -qs '^cdlab()' "$rc" && return 0
+  printf '\n# donlab: cdlab -> the Labtainers student directory (where labs are started)\ncdlab() { cd "${LABTAINER_DIR:-%s}/scripts/labtainer-student" || cd "%s"; }\n' "$LTDIR" "$ls_dir" >> "$rc" 2>/dev/null \
+    && echo "donlab: added 'cdlab' to ~/.bashrc (cd to $ls_dir)."
+}
+ensure_i3_session() {
+  local SUDO="" d marker="$CFG/i3-switched" xs=/usr/share/xsessions/i3.desktop i u
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_I3:-}" ] && [ "${NO_I3:-0}" != 1 ] || return 0
+  d="$(detect_desktop)"
+  if [ "$d" = i3 ]; then write_i3_files "$LTDIR/scripts/labtainer-student"; return 0; fi
+  if [ -f "$marker" ]; then
+    echo "donlab: i3 is set as your login session, but this session is $d. Log out and pick \"i3\" at the"
+    echo "        login screen (or run donlab --no-i3 / export DONLAB_NO_I3=1 to stay in $d)."
+    return 0
+  fi
+  if [ ! -d /etc/lightdm ] && [ ! -d /var/lib/AccountsService ]; then
+    echo "donlab: no lightdm / AccountsService here; staying in $d (i3 switch skipped)."; return 0
+  fi
+  [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+  if [ ! -f "$xs" ]; then
+    command -v apt-get >/dev/null 2>&1 || { echo "donlab: i3 is not installed and only apt is supported; staying in $d."; return 0; }
+    echo "==> Installing i3 (tiling window manager) + helpers (sudo may ask for your password)."
+    $SUDO apt-get update -qq || true
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y i3 suckless-tools feh xclip picom >/dev/null \
+      || { echo "donlab: could not install i3; staying in $d."; return 0; }
+    [ -f "$xs" ] || { echo "donlab: i3 installed but has no session entry; staying in $d."; return 0; }
+  fi
+  write_i3_files "$LTDIR/scripts/labtainer-student"
+  touch "$CFG/i3-welcome-pending"
+  u="$(id -un)"
+  if [ -d /etc/lightdm ]; then
+    printf '[Seat:*]\nuser-session=i3\nautologin-session=i3\n' | $SUDO tee /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf >/dev/null \
+      || { echo "donlab: could not write the lightdm session setting; staying in $d."; rm -f "$CFG/i3-welcome-pending"; return 0; }
+  fi
+  if [ -d /var/lib/AccountsService/users ]; then
+    $SUDO python3 - "$u" <<'PY' 2>/dev/null || true
+import os, re, sys
+u = sys.argv[1]; p = '/var/lib/AccountsService/users/' + u
+s = open(p).read() if os.path.exists(p) else '[User]\n'
+if '[User]' not in s: s = '[User]\n' + s
+for k in ('XSession', 'Session'):
+    if re.search(r'^%s=' % k, s, re.M): s = re.sub(r'^%s=.*$' % k, k + '=i3', s, flags=re.M)
+    else: s = s.replace('[User]\n', '[User]\n%s=i3\n' % k, 1)
+open(p, 'w').write(s)
+PY
+  fi
+  printf '[Desktop]\nSession=i3\n' > "$HOME/.dmrc" 2>/dev/null || true
+  touch "$marker"
+  echo
+  echo "donlab: switching your login session from $d to i3 (the tiling desktop the labs are designed for)."
+  echo "        Rebooting in 10 s -- press Ctrl-C to stay in $d for now (i3 is then offered at the login"
+  echo "        screen). A quick-start window with the keys opens on the first i3 login."
+  for i in 10 9 8 7 6 5 4 3 2 1; do printf '\r        reboot in %2d s ' "$i"; sleep 1; done; echo
+  $SUDO systemctl reboot 2>/dev/null || $SUDO reboot
+  exit 0
+}
+
+# ---- dark desktop (i3 / XFCE / GNOME) -------------------------------------------------------
 # The manuals, the tmux chrome and the report tooling are designed dark; the appliance ships
 # GNOME in light mode. Switch the desktop to dark ONCE (marker in $CFG) so a student who later
 # picks light again is never overridden. Only inside a GNOME session with gsettings; never
@@ -192,21 +423,34 @@ ensure_dark_theme() {
   local marker="$CFG/.dark-theme-set" cur gtk
   [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_DARK:-}" ] || return 0
   [ -f "$marker" ] && return 0
-  command -v gsettings >/dev/null 2>&1 || return 0
-  case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*|*ubuntu*) ;; *) return 0 ;; esac
-  cur="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null || true)"
-  if [ "$cur" != "'prefer-dark'" ]; then
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || return 0
-    # GTK3 apps (gnome-terminal, Firefox chrome) follow gtk-theme, not color-scheme: move a stock
-    # Yaru light variant to its dark twin; leave any custom theme alone.
-    gtk="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")"
-    case "$gtk" in
-      Yaru)        gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true ;;
-      Yaru-*-dark) ;;
-      Yaru-*)      gsettings set org.gnome.desktop.interface gtk-theme "$gtk-dark" 2>/dev/null || true ;;
-    esac
-    echo "donlab: switched the desktop to dark mode (once; undo with: gsettings set org.gnome.desktop.interface color-scheme 'default')."
-  fi
+  case "$(detect_desktop)" in
+    gnome)
+      command -v gsettings >/dev/null 2>&1 || { touch "$marker" 2>/dev/null; return 0; }
+      cur="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null || true)"
+      if [ "$cur" != "'prefer-dark'" ]; then
+        gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' 2>/dev/null || true
+        gtk="$(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null | tr -d "'")"
+        case "$gtk" in
+          Yaru)        gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark' 2>/dev/null || true ;;
+          Yaru-*-dark) ;;
+          Yaru-*)      gsettings set org.gnome.desktop.interface gtk-theme "$gtk-dark" 2>/dev/null || true ;;
+        esac
+        echo "donlab: switched the desktop to dark mode (once; undo: gsettings set org.gnome.desktop.interface color-scheme 'default')."
+      fi ;;
+    xfce)
+      if command -v xfconf-query >/dev/null 2>&1; then
+        xfconf-query -c xsettings -p /Net/ThemeName -s Adwaita-dark >/dev/null 2>&1 \
+          || xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s Adwaita-dark >/dev/null 2>&1 || true
+        echo "donlab: set XFCE to a dark theme (once)."
+      fi ;;
+    *)  # i3 / other: GTK3 apps honor ~/.config/gtk-3.0/settings.ini even with no settings daemon
+      mkdir -p "$HOME/.config/gtk-3.0"
+      if ! grep -qs gtk-application-prefer-dark-theme "$HOME/.config/gtk-3.0/settings.ini"; then
+        { [ -f "$HOME/.config/gtk-3.0/settings.ini" ] && ! grep -qs '^\[Settings\]' "$HOME/.config/gtk-3.0/settings.ini" && printf '[Settings]\n'; \
+          printf 'gtk-application-prefer-dark-theme=1\ngtk-theme-name=Adwaita-dark\n'; } >> "$HOME/.config/gtk-3.0/settings.ini" 2>/dev/null || true
+        echo "donlab: set a dark GTK theme for this session (once)."
+      fi ;;
+  esac
   touch "$marker" 2>/dev/null || true
 }
 
@@ -241,6 +485,11 @@ ensure_wallpaper() {
   [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_WALLPAPER:-}" ] || return 0
   [ -f "$marker" ] && return 0
   printf '%s' "$LOGO_B64" | base64 -d > "$img" 2>/dev/null && [ -s "$img" ] || return 0
+  if { [ "${XDG_CURRENT_DESKTOP:-}" = i3 ] || pgrep -x i3 >/dev/null 2>&1; } && command -v feh >/dev/null 2>&1; then
+    feh --image-bg black --bg-center "$img" >/dev/null 2>&1 || true
+    echo "donlab: set the NPS wallpaper (once; feh under i3)."
+    touch "$marker" 2>/dev/null; return 0
+  fi
   if command -v xfconf-query >/dev/null 2>&1 && xfconf-query -c xfce4-desktop -l >/dev/null 2>&1; then
     props="$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '^/backdrop/.*/last-image$' || true)"
     if [ -z "$props" ]; then      # fresh session: derive the property paths from the monitors
@@ -385,11 +634,13 @@ esac; done
 
 # ---- args: pull out our flags, pass the rest through to labtainer ----
 USE_TMUX=1
+NO_I3=0
 UPDATE_LT=0
 PASS=()
 for a in "$@"; do
   case "$a" in
     --no-tmux|--gui) USE_TMUX=0 ;;
+    --no-i3)         NO_I3=1 ;;
     --tmux)          USE_TMUX=1 ;;
     --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
@@ -508,6 +759,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SHIM" ] && rm -rf "$SHIM"' EXIT
 
 # ---- fetch / refresh the encrypted lab bundle (imodule) ----
 CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
+ensure_i3_session   # opinionated: lab work happens in i3 (installs, sets the login session, reboots once)
 step "Checking for the latest lab bundle..."
 remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
 local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
@@ -720,6 +972,12 @@ lab_tmux() {
   done
   [ "$made" -gt 0 ] || { echo "no visible terminals for '$LAB' -- is it running?"; return 1; }
   tmux set -t "$SESSION" mouse on >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-right "" >/dev/null 2>&1 || true   # no clock/date on the lab status line
+  if command -v xclip >/dev/null 2>&1; then
+    tmux set -g copy-command 'xclip -selection clipboard -in' >/dev/null 2>&1 || true
+    tmux bind -T copy-mode    MouseDragEnd1Pane send -X copy-pipe-and-cancel >/dev/null 2>&1 || true
+    tmux bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-pipe-and-cancel >/dev/null 2>&1 || true
+  fi
   tmux set -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
   # Force a dark-blue status line + readable tabs and subtle borders, scoped to THIS
   # session, so our tmux looks right regardless of the host VM's theme. (Pane contents are
@@ -784,7 +1042,7 @@ start_lab() {  # $1 = optional PATH prefix
     for s in $subs;  do docker network rm "$s" >/dev/null 2>&1 || true; done   # leftover lab subnets
     run_lab "${1:-}"
   fi
-  if lab_running && ! needs_reset; then return 0; fi
+  if lab_running && ! needs_reset; then ensure_container_x; return 0; fi
   echo "donlab: the lab did not start -- see the messages above (try: stoplab $LAB, then run donlab again)."
   show_dead_containers
 }
@@ -801,10 +1059,127 @@ show_dead_containers() {
 }
 
 # Install the lab helpers (tmux for the multi-pane layout, vim as the manual's editor) if missing.
+# ---- X access for lab-container GUI apps ------------------------------------------------------
+# Container GUI apps (e.g. Firefox on hi-ws-it) display on THIS X server. The framework grants only
+# `xhost local:root`, so a non-root container app can fail "cannot connect to display :0" (notably
+# under i3). Grant local clients each launch. Opt out with DONLAB_NO_XHOST=1.
+ensure_xhost() {
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XHOST:-}" ] || return 0
+  command -v xhost >/dev/null 2>&1 || return 0
+  xhost +local: >/dev/null 2>&1 || true
+}
+
+# ---- i3 status bar: Disk / Mem / clock with seconds (YYYY-MM-DD HH:MM:SS TZ) -----------------------------------
+# Stock i3status shows disk/load/memory/network -- noise on a lab VM. Write a user-level i3status
+# config once (marker), then restart i3 in place (layout preserved) so i3bar picks it up. i3 only;
+# XFCE/GNOME have their own panels. Opt out with DONLAB_NO_STATUSBAR=1; edit
+# ~/.config/i3status/config to customize (donlab will not override a config that exists).
+ensure_i3_statusbar() {
+  local cfg="$HOME/.config/i3status/config" stamp="# managed by donlab (i3status v4)" old138
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_STATUSBAR:-}" ] || return 0
+  [ "$(detect_desktop)" = i3 ] || return 0
+  [ -f "$cfg" ] && grep -qs "^$stamp" "$cfg" && return 0          # already current
+  # the 1.3.8 clock-only file had no stamp: recognise it by content so it still gets updated;
+  # anything else that exists was written by the student -- leave it alone.
+  old138='general {\n    colors = true\n    interval = 5\n    output_format = "i3bar"\n}\norder += "tztime local"\ntztime local {\n    format = "%Y-%m-%d %H:%M %Z"\n}\n'
+  if [ -f "$cfg" ] && [ "$(cat "$cfg")" != "$(printf '%b' "$old138")" ] && ! grep -qs "managed by donlab" "$cfg"; then return 0; fi
+  mkdir -p "$(dirname "$cfg")"
+  printf '%s\ngeneral {\n    colors = true\n    color_degraded = "#ffff00"\n    color_bad = "#ff0000"\n    interval = 1\n    output_format = "i3bar"\n}\norder += "disk /"\norder += "memory"\norder += "tztime local"\ndisk / {\n    format = "Disk: %%percentage_used"\n    low_threshold = 20\n    threshold_type = "percentage_free"\n}\nmemory {\n    format = "Mem: %%percentage_used"\n    threshold_degraded = "30%%"\n    threshold_critical = "20%%"\n}\ntztime local {\n    format = "%%Y-%%m-%%d %%H:%%M:%%S %%Z"\n}\n' "$stamp" > "$cfg"
+  command -v i3-msg >/dev/null 2>&1 && i3-msg restart >/dev/null 2>&1 || true
+  echo "donlab: i3 status bar set to Disk / Mem / clock with seconds (edit ~/.config/i3status/config to change)."
+}
+
+# ---- X for lab containers: PERMANENT fix (all DEs, arm + intel) ------------------------------
+# How the framework wires X: it mounts the host's X socket dir at /var/tmp/.X11-unix inside every
+# X11 container and links /tmp/.X11-unix/XN to it (N = host display) -- but it decides that ONLY
+# when the container is CREATED, and a stopped container is RESUMED, not recreated. So a container
+# first made without a display (SSH shell, no DISPLAY) stays blind forever, and the link goes stale
+# if the display number changes. Two repairs, every launch, opt out with DONLAB_NO_XFIX=1:
+#  (1) before start: drop X11 containers that lack the X mount so the framework recreates them;
+#  (2) after start: inside each X11 container, (re)link /tmp/.X11-unix/XN -> the mounted socket and
+#      pin DISPLAY=:N; on the host, grant local clients (the framework only grants root).
+x11_containers() {   # $1 = start.config -> container names marked X11 YES
+  awk '/^[[:space:]]*CONTAINER[[:space:]]/{c=$2} /^[[:space:]]*X11[[:space:]]+YES/{if(c)print c}' "$1" 2>/dev/null
+}
+reset_x_broken_containers() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" c cname bad=() net
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XFIX:-}" ] && [ -f "$sc" ] || return 0
+  for c in $(x11_containers "$sc"); do
+    cname="$LAB.$c.student"
+    docker inspect "$cname" >/dev/null 2>&1 || continue
+    docker inspect -f '{{range .Mounts}}{{.Destination}} {{end}}' "$cname" 2>/dev/null | grep -q '/var/tmp/.X11-unix' || bad+=("$c")
+  done
+  [ ${#bad[@]} -gt 0 ] || return 0
+  echo "donlab: ${bad[*]} was created without the X display mount (GUI apps like Firefox could not open a"
+  echo "        window). Recreating the lab so they can -- work inside the old containers is not carried over."
+  "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
+  docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
+  for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do docker network rm "$net" >/dev/null 2>&1 || true; done
+}
+ensure_container_x() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" n c cname
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XFIX:-}" ] && [ -f "$sc" ] || return 0
+  n="${DISPLAY#*:}"; n="${n%%.*}"
+  command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || true
+  [ -S "/tmp/.X11-unix/X$n" ] || echo "donlab: warning -- no X socket at /tmp/.X11-unix/X$n on this host; container GUI apps cannot display."
+  for c in $(x11_containers "$sc"); do
+    cname="$LAB.$c.student"
+    [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = true ] || continue
+    docker exec "$cname" sh -c "mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && ln -sfn /var/tmp/.X11-unix/X$n /tmp/.X11-unix/X$n; grep -qs '^DISPLAY=' /etc/environment || echo 'DISPLAY=:$n' >> /etc/environment" >/dev/null 2>&1 || true
+  done
+}
+
+# ---- clipboard that works on a UTM/Mac appliance (esp. under i3) -------------------------------
+# Two pieces the research pins down: (1) spice-vdagent bridges the macOS (UTM host) clipboard to the
+# guest -- a full desktop autostarts it, i3 does not, so copy/paste between the Mac and the VM is
+# dead until it runs; it needs the SPICE virtio port (present when UTM clipboard sharing is on).
+# (2) clipmenud keeps a copy alive after you close the app you copied from (bare i3 loses it).
+# Both are started once if absent, guarded by DISPLAY, non-fatal. Opt out with DONLAB_NO_CLIPBOARD=1.
+ensure_clipboard() {
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_CLIPBOARD:-}" ] || return 0
+  if command -v spice-vdagent >/dev/null 2>&1 && [ -e /dev/virtio-ports/com.redhat.spice.0 ]; then
+    pgrep -x spice-vdagent >/dev/null 2>&1 || (setsid spice-vdagent >/dev/null 2>&1 &) 2>/dev/null || true
+  fi
+  if command -v clipmenud >/dev/null 2>&1; then
+    pgrep -x clipmenud >/dev/null 2>&1 || (setsid clipmenud >/dev/null 2>&1 &) 2>/dev/null || true
+  fi
+}
+
+# ---- terminal transparency + the compositor that renders it ----------------------------------
+# 95%-opaque gnome-terminal so the NPS logo shows through, plus the compositor the session needs
+# (XFCE compositing via xfconf; picom under i3). Transparency is one-shot (marker); the compositor
+# is ensured every launch. Opt out with DONLAB_NO_TRANSPARENCY=1.
+ensure_terminal_ergonomics() {
+  local marker="$CFG/.terminal-ergonomics" prof base
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_TRANSPARENCY:-}" ] || return 0
+  case "$(detect_desktop)" in
+    i3)   command -v picom >/dev/null 2>&1 && ! pgrep -x picom >/dev/null 2>&1 && (picom -b --backend xrender >/dev/null 2>&1 || true) ;;
+    xfce) command -v xfconf-query >/dev/null 2>&1 && { xfconf-query -c xfwm4 -p /general/use_compositing -s true >/dev/null 2>&1 \
+            || xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s true >/dev/null 2>&1 || true; } ;;
+    gnome) : ;;   # mutter always composites; nothing to enable
+  esac
+  [ -f "$marker" ] && return 0
+  command -v gsettings >/dev/null 2>&1 || return 0
+  prof="$(gsettings get org.gnome.Terminal.ProfilesList default 2>/dev/null | tr -d "'")"
+  [ -n "$prof" ] || return 0
+  base="org.gnome.Terminal.Legacy.Profile:/org/gnome/terminal/legacy/profiles:/:$prof/"
+  gsettings set "$base" use-transparent-background true 2>/dev/null || true
+  gsettings set "$base" use-theme-transparency false 2>/dev/null || true
+  gsettings set "$base" background-transparency-percent 5 2>/dev/null || true
+  touch "$marker" 2>/dev/null || true
+  echo "donlab: set gnome-terminal to 95% opaque so the wallpaper shows through (once; DONLAB_NO_TRANSPARENCY=1 to skip)."
+}
+
 ensure_tools
+ensure_cdlab
 ensure_dark_theme
 ensure_natural_scroll
 ensure_wallpaper
+ensure_xhost
+ensure_clipboard
+ensure_terminal_ergonomics
+reset_x_broken_containers   # must run after its definition (was a top-level call above it: 'command not found')
+ensure_i3_statusbar
 
 # ---- standard (pop-up terminals) mode ----
 # Start the lab FIRST; open the manual only once the containers are actually up, so it does
