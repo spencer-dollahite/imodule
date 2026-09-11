@@ -18,6 +18,7 @@
 #               login session, and reboots ONCE; the first i3 login opens a quick-start window in
 #               the Labtainers student directory. (env) DONLAB_NO_I3=1 does the same permanently.
 #   cdlab       shell helper donlab adds to ~/.bashrc: cd to the Labtainers student directory.
+#   (env) DONLAB_NO_LAYOUT=1   under i3, do not arrange terminal / manual / container GUI windows.
 #   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
 #   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
 #   (env) DONLAB_NO_WALLPAPER=1   do not set the NPS-logo-on-black desktop wallpaper on first launch.
@@ -41,7 +42,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.12'
+DONLAB_VERSION='1.3.13'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -217,13 +218,18 @@ detect_desktop() {
 # that (a greeter that ignores the setting), donlab says so and carries on in the current desktop.
 # Opt out: --no-i3 or DONLAB_NO_I3=1. Undo: Super+Shift+e, pick another session at the login
 # screen; sudo rm /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf to make that permanent.
-I3_CFG_STAMP="# managed by donlab (i3 config v1)"
+I3_CFG_STAMP="# managed by donlab (i3 config v2)"
 i3_config_text() {   # the appliance's /etc/i3/config, with donlab's startup hook; $1 = startup script
   cat <<I3
 $I3_CFG_STAMP -- delete this line to keep your own edits (donlab then leaves the file alone)
 set \$mod Mod4
 floating_modifier \$mod
 font pango:DejaVu Sans Mono 10
+
+# --- lab layout (donlab arranges it when a lab starts): terminal = left half, full height;
+#     manual = top right; GUI apps launched from a container (Firefox, Wireshark) = bottom right ---
+for_window [class="lab-firefox"] move window to mark manual
+for_window [class="(?i)^wireshark$"] move window to mark manual
 
 # --- policy parity with the desktop sessions (i3 does not run XDG autostart) ---
 exec --no-startup-id xset s off -dpms
@@ -936,9 +942,27 @@ open_manual() {
     url="file://$m"
     echo "donlab: manual opened read-only (bridge unavailable; the live buttons need it)"
   fi
+  # i3: the manual gets its own Firefox instance (own profile, WM_CLASS don-manual) so the layout
+  # can find it: terminal left half, manual top right, container GUI apps bottom right (see the
+  # for_window rules in the i3 config). Re-runs reuse the running instance (same profile).
+  if [ "$(detect_desktop)" = i3 ] && command -v firefox >/dev/null 2>&1 && command -v i3-msg >/dev/null 2>&1 && [ -z "${DONLAB_NO_LAYOUT:-}" ]; then
+    i3-msg 'mark --replace lab-terminal, split h' >/dev/null 2>&1 || true
+    mkdir -p "$CFG/firefox-manual"
+    (firefox --class don-manual --profile "$CFG/firefox-manual" "$url" >/dev/null 2>&1 &)
+    i3_layout_manual
+    return 0
+  fi
   for b in firefox firefox-esr x-www-browser xdg-open; do
     if command -v "$b" >/dev/null 2>&1; then ("$b" "$url" >/dev/null 2>&1 &) ; return 0; fi
   done
+}
+i3_layout_manual() {   # wait for the manual window, put it top right, hand focus back to the terminal
+  local i
+  for i in $(seq 1 40); do
+    i3-msg -t get_tree 2>/dev/null | grep -q '"class":"don-manual"' && break; sleep 0.5
+  done
+  i3-msg '[class="don-manual"] focus, split v, mark --replace manual' >/dev/null 2>&1 || return 0
+  i3-msg '[con_mark="lab-terminal"] focus' >/dev/null 2>&1 || true
 }
 
 # ---- lay a started lab out in one tmux session (embedded launcher) ----
