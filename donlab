@@ -36,7 +36,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.4'
+DONLAB_VERSION='1.3.5'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -683,6 +683,7 @@ refresh_images() {
   done
 }
 refresh_images
+reset_x_broken_containers
 
 # ---- lab manual bridge: serve the manual over http://127.0.0.1 so its Check Work / Stop Lab /
 # scenario buttons can reach the local API (a file:// page has no origin to call). The bridge is
@@ -827,7 +828,7 @@ start_lab() {  # $1 = optional PATH prefix
     for s in $subs;  do docker network rm "$s" >/dev/null 2>&1 || true; done   # leftover lab subnets
     run_lab "${1:-}"
   fi
-  if lab_running && ! needs_reset; then return 0; fi
+  if lab_running && ! needs_reset; then ensure_container_x; return 0; fi
   echo "donlab: the lab did not start -- see the messages above (try: stoplab $LAB, then run donlab again)."
   show_dead_containers
 }
@@ -852,6 +853,46 @@ ensure_xhost() {
   [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XHOST:-}" ] || return 0
   command -v xhost >/dev/null 2>&1 || return 0
   xhost +local: >/dev/null 2>&1 || true
+}
+
+# ---- X for lab containers: PERMANENT fix (all DEs, arm + intel) ------------------------------
+# How the framework wires X: it mounts the host's X socket dir at /var/tmp/.X11-unix inside every
+# X11 container and links /tmp/.X11-unix/XN to it (N = host display) -- but it decides that ONLY
+# when the container is CREATED, and a stopped container is RESUMED, not recreated. So a container
+# first made without a display (SSH shell, no DISPLAY) stays blind forever, and the link goes stale
+# if the display number changes. Two repairs, every launch, opt out with DONLAB_NO_XFIX=1:
+#  (1) before start: drop X11 containers that lack the X mount so the framework recreates them;
+#  (2) after start: inside each X11 container, (re)link /tmp/.X11-unix/XN -> the mounted socket and
+#      pin DISPLAY=:N; on the host, grant local clients (the framework only grants root).
+x11_containers() {   # $1 = start.config -> container names marked X11 YES
+  awk '/^[[:space:]]*CONTAINER[[:space:]]/{c=$2} /^[[:space:]]*X11[[:space:]]+YES/{if(c)print c}' "$1" 2>/dev/null
+}
+reset_x_broken_containers() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" c cname bad=() net
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XFIX:-}" ] && [ -f "$sc" ] || return 0
+  for c in $(x11_containers "$sc"); do
+    cname="$LAB.$c.student"
+    docker inspect "$cname" >/dev/null 2>&1 || continue
+    docker inspect -f '{{range .Mounts}}{{.Destination}} {{end}}' "$cname" 2>/dev/null | grep -q '/var/tmp/.X11-unix' || bad+=("$c")
+  done
+  [ ${#bad[@]} -gt 0 ] || return 0
+  echo "donlab: ${bad[*]} was created without the X display mount (GUI apps like Firefox could not open a"
+  echo "        window). Recreating the lab so they can -- work inside the old containers is not carried over."
+  "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
+  docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
+  for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do docker network rm "$net" >/dev/null 2>&1 || true; done
+}
+ensure_container_x() {
+  local sc="$LTDIR/labs/$LAB/config/start.config" n c cname
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_XFIX:-}" ] && [ -f "$sc" ] || return 0
+  n="${DISPLAY#*:}"; n="${n%%.*}"
+  command -v xhost >/dev/null 2>&1 && xhost +local: >/dev/null 2>&1 || true
+  [ -S "/tmp/.X11-unix/X$n" ] || echo "donlab: warning -- no X socket at /tmp/.X11-unix/X$n on this host; container GUI apps cannot display."
+  for c in $(x11_containers "$sc"); do
+    cname="$LAB.$c.student"
+    [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = true ] || continue
+    docker exec "$cname" sh -c "mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && ln -sfn /var/tmp/.X11-unix/X$n /tmp/.X11-unix/X$n; grep -qs '^DISPLAY=' /etc/environment || echo 'DISPLAY=:$n' >> /etc/environment" >/dev/null 2>&1 || true
+  done
 }
 
 # ---- clipboard that works on a UTM/Mac appliance (esp. under i3) -------------------------------
