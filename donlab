@@ -36,7 +36,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.2'
+DONLAB_VERSION='1.3.3'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -171,6 +171,8 @@ ensure_tools() {
   command -v tmux >/dev/null 2>&1 || { [ "${USE_TMUX:-1}" = 1 ] && want+=(tmux); }
   command -v vim  >/dev/null 2>&1 || want+=(vim)
   command -v xclip >/dev/null 2>&1 || want+=(xclip)   # bridge tmux selection -> X clipboard
+  command -v spice-vdagent >/dev/null 2>&1 || want+=(spice-vdagent)  # UTM/Mac host <-> guest clipboard
+  command -v clipmenud >/dev/null 2>&1 || want+=(clipmenu)            # keep clipboard after the source app closes
   # picom: a compositor so gnome-terminal transparency renders under i3 (XFCE has its own).
   if [ "${XDG_CURRENT_DESKTOP:-}" = i3 ] || pgrep -x i3 >/dev/null 2>&1; then
     command -v picom >/dev/null 2>&1 || want+=(picom)
@@ -821,6 +823,22 @@ ensure_xhost() {
   xhost +local: >/dev/null 2>&1 || true
 }
 
+# ---- clipboard that works on a UTM/Mac appliance (esp. under i3) -------------------------------
+# Two pieces the research pins down: (1) spice-vdagent bridges the macOS (UTM host) clipboard to the
+# guest -- a full desktop autostarts it, i3 does not, so copy/paste between the Mac and the VM is
+# dead until it runs; it needs the SPICE virtio port (present when UTM clipboard sharing is on).
+# (2) clipmenud keeps a copy alive after you close the app you copied from (bare i3 loses it).
+# Both are started once if absent, guarded by DISPLAY, non-fatal. Opt out with DONLAB_NO_CLIPBOARD=1.
+ensure_clipboard() {
+  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_CLIPBOARD:-}" ] || return 0
+  if command -v spice-vdagent >/dev/null 2>&1 && [ -e /dev/virtio-ports/com.redhat.spice.0 ]; then
+    pgrep -x spice-vdagent >/dev/null 2>&1 || (setsid spice-vdagent >/dev/null 2>&1 &) 2>/dev/null || true
+  fi
+  if command -v clipmenud >/dev/null 2>&1; then
+    pgrep -x clipmenud >/dev/null 2>&1 || (setsid clipmenud >/dev/null 2>&1 &) 2>/dev/null || true
+  fi
+}
+
 # ---- terminal transparency + the compositor that renders it ----------------------------------
 # 95%-opaque gnome-terminal so the NPS logo shows through, plus the compositor the session needs
 # (XFCE compositing via xfconf; picom under i3). Transparency is one-shot (marker); the compositor
@@ -851,6 +869,7 @@ ensure_dark_theme
 ensure_natural_scroll
 ensure_wallpaper
 ensure_xhost
+ensure_clipboard
 ensure_terminal_ergonomics
 
 # ---- standard (pop-up terminals) mode ----
