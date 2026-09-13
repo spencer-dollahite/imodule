@@ -42,7 +42,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.13'
+DONLAB_VERSION='1.3.16'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -642,20 +642,25 @@ esac; done
 USE_TMUX=1
 NO_I3=0
 UPDATE_LT=0
+DOCTOR=0
 PASS=()
 for a in "$@"; do
   case "$a" in
     --no-tmux|--gui) USE_TMUX=0 ;;
     --no-i3)         NO_I3=1 ;;
+    --reset)         RESET_LAB=1 ;;
+    --doctor|--check)   DOCTOR=1 ;;
     --tmux)          USE_TMUX=1 ;;
     --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
   esac
 done
-if [ "$UPDATE_LT" != 1 ]; then
+if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
     echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"; \
     echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; \
+    echo "       donlab --reset <labname>      # discard this lab's containers and start it fresh"; \
+    echo "       donlab --doctor               # check this VM is ready to run labs (X, clipboard, docker, registry)"; \
     echo "       donlab -v|--version           # print the donlab version"; exit 1; }
   LAB="${PASS[0]}"
 fi
@@ -748,6 +753,60 @@ LT="$LTDIR/scripts/labtainer-student/bin/labtainer"
 # A fresh appliance may not have the labs dir yet, and imodule/labtainer must target
 # $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
 mkdir -p "$LTDIR/labs" 2>/dev/null || true
+
+# ---- environment self-check: `donlab --doctor` -----------------------------------------------
+# A student-runnable readiness check. Each probe is independent, prints PASS/WARN/FAIL, and never
+# aborts; exit is non-zero only if something that WILL break a lab is wrong (no docker, no X).
+run_doctor() {
+  local fail=0 warn=0
+  P(){ printf '  \033[32mPASS\033[0m %s\n' "$1"; }
+  W(){ printf '  \033[33mWARN\033[0m %s\n' "$1"; warn=$((warn+1)); }
+  F(){ printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }
+  echo "donlab doctor -- $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null))"
+  echo "Labtainers tree: $LTDIR"
+  # Docker daemon
+  if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then P "docker daemon reachable"
+    else F "docker is installed but the daemon is not reachable (is it running? are you in the 'docker' group?)"; fi
+  else F "docker not found on PATH"; fi
+  # X display (labs open Firefox/Wireshark on your desktop)
+  if [ -n "${DISPLAY:-}" ]; then
+    if command -v xset >/dev/null 2>&1 && xset q >/dev/null 2>&1; then P "X display $DISPLAY reachable (GUI apps will open)"
+    elif command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo >/dev/null 2>&1; then P "X display $DISPLAY reachable"
+    else W "DISPLAY=$DISPLAY is set but X did not answer (run from the desktop, not over plain ssh)"; fi
+  else W "no DISPLAY set -- GUI lab steps (Firefox/Wireshark) need a desktop session"; fi
+  # Clipboard (copy/paste between host and lab)
+  if command -v xclip >/dev/null 2>&1; then
+    if [ -n "${DISPLAY:-}" ] && printf donlab-clip-test | xclip -selection clipboard -in >/dev/null 2>&1 \
+       && [ "$(xclip -selection clipboard -o 2>/dev/null)" = donlab-clip-test ]; then P "clipboard read/write works (xclip)"
+    else W "xclip present but the clipboard round-trip failed (needs a running X session)"; fi
+  else W "xclip not installed -- tmux mouse-copy to the system clipboard won't work"; fi
+  # Registry reachability (labs pull images)
+  if [ -n "${DONLAB_NO_PULL:-}" ]; then W "DONLAB_NO_PULL set -- skipping the registry reachability check"
+  elif command -v curl >/dev/null 2>&1; then
+    if curl -m 8 -fsS -o /dev/null "https://registry-1.docker.io/v2/" 2>/dev/null \
+       || curl -m 8 -fsS -o /dev/null "https://index.docker.io/v1/" 2>/dev/null; then P "Docker registry reachable (lab images can be pulled/updated)"
+    else W "could not reach the Docker registry -- labs will run from locally-cached images only"; fi
+  else W "curl not installed -- skipped the registry reachability check"; fi
+  # Disk headroom for images
+  local free_kb; free_kb=$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')
+  if [ -n "$free_kb" ]; then
+    local free_gb=$((free_kb/1024/1024))
+    if [ "$free_gb" -ge 15 ]; then P "disk: ${free_gb} GB free for images"
+    elif [ "$free_gb" -ge 6 ]; then W "disk: only ${free_gb} GB free -- a large lab may run tight"
+    else F "disk: only ${free_gb} GB free -- image pulls/builds will likely fail"; fi
+  fi
+  # Editor + terminal multiplexer the labs assume
+  command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found (labs assume vim; vi will be used)"
+  command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found (labs fall back to pop-up terminals)"
+  # ARM host: images must be arm64
+  if [ "$HOST_ARCH" = arm64 ]; then P "Apple-Silicon host: donlab installs :arm64 images per lab"; fi
+  echo
+  if [ "$fail" -gt 0 ]; then echo "doctor: $fail problem(s), $warn warning(s) -- fix the FAIL items before running a lab."; return 1
+  elif [ "$warn" -gt 0 ]; then echo "doctor: ready, with $warn warning(s) above."; return 0
+  else echo "doctor: all checks passed -- this VM is ready to run labs."; return 0; fi
+}
+if [ "${DOCTOR:-0}" = 1 ]; then run_doctor; exit $?; fi
 
 # framework-update mode: `donlab --update-labtainers` -- do it and exit (needs $LTDIR/$LS_DIR).
 if [ "$UPDATE_LT" = 1 ]; then update_labtainers; exit $?; fi
@@ -891,17 +950,65 @@ refresh_images() {
       else echo "      -> up to date"; fi
     done
   fi
+  prefetch_grader
   [ ${#changed[@]} -gt 0 ] || return 0
-  echo "donlab: $LAB was updated (new images: ${changed[*]}). Resetting the previous instance so the lab"
-  echo "        starts on the new images -- work inside the old containers is not carried over."
+  echo "donlab: $LAB was updated (new images: ${changed[*]})."
+  # A student mid-lab must not lose their work silently: if this lab already has containers, say
+  # what a reset means and let them keep the old instance (their containers keep running on the
+  # image they were created from, even though the tag now points at the new build). Non-interactive
+  # callers (CI, the harness) get the reset, as before.
+  if [ -n "$(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null)" ] && [ -t 0 ]; then
+    echo "        You have an existing instance of this lab. Starting on the new images RESETS it:"
+    echo "        everything you did inside the old containers is discarded (checkwork results are kept)."
+    echo "        To keep working where you left off, choose keep; you can reset later with: donlab --reset $LAB"
+    local ans
+    read -r -p "        Reset to the new images now? [reset/keep] (keep) " ans
+    case "${ans,,}" in reset|r|yes|y) ;; *) echo "        Keeping your current instance."; return 0 ;; esac
+  fi
+  echo "        Resetting the previous instance so the lab starts on the new images."
+  reset_lab_instance
+}
+# Discard the lab's containers and networks (NETWORK names in start.config, lowercased by the
+# framework) so the next start is fresh and does not log "Already exists! Not creating <net> subnet".
+reset_lab_instance() {
+  local sc="$LTDIR/labs/$LAB/config/start.config"
   "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
   docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
-  # ...and the lab's networks (NETWORK names in start.config, lowercased by the framework), so
-  # the fresh start does not log "Already exists! Not creating <net> subnet" for each of them.
-  local net; for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do
+  local net; for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc" 2>/dev/null); do
     docker network rm "$net" >/dev/null 2>&1 || true
   done
 }
+# checkwork/gradelab run the assessment in a container made from the image `labtainer.grader`. The
+# framework looks for that plain name locally first and otherwise pulls it from the registry at the
+# moment the student runs checkwork -- a 480 MB wait on their first attempt. Fetch it at lab launch
+# instead. ARM host: the upstream grader is amd64-only, so install OUR arm64 build (:arm64) under
+# the plain name (same trick as the lab images). x86 host: pull the upstream image in the background
+# so the lab start is not delayed. Best-effort; offline = whatever is local. Opt out: DONLAB_NO_PULL=1.
+prefetch_grader() {
+  [ -z "${DONLAB_NO_PULL:-}" ] || return 0
+  local reg; reg="$(awk '/^[[:space:]]*REGISTRY[[:space:]]/{print $2; exit}' "$sc" 2>/dev/null)"; reg="${reg:-ssdollahite}"
+  if [ "$HOST_ARCH" = arm64 ]; then
+    if [ "$(docker image inspect -f '{{.Architecture}}' labtainer.grader:latest 2>/dev/null)" = arm64 ] && docker pull -q "$reg/labtainer.grader:arm64" >/dev/null 2>&1 \
+       && [ "$(docker image inspect -f '{{.Id}}' "$reg/labtainer.grader:arm64" 2>/dev/null)" = "$(docker image inspect -f '{{.Id}}' labtainer.grader:latest 2>/dev/null)" ]; then
+      return 0   # already installed and current
+    fi
+    step "ARM host: fetching the checkwork grader ($reg/labtainer.grader:arm64) so your first checkwork is quick..."
+    if docker pull "$reg/labtainer.grader:arm64" 2>&1 | grep --line-buffered -E 'Pull complete|Status:|rror' | sed -u 's/^/      /'; \
+       docker image inspect "$reg/labtainer.grader:arm64" >/dev/null 2>&1; then
+      docker tag "$reg/labtainer.grader:arm64" labtainer.grader:latest 2>/dev/null || true
+    else
+      echo "      -> not available; checkwork will try the registry itself"
+    fi
+  else
+    local up="labtainers/labtainer.grader"
+    docker image inspect labtainer.grader:latest >/dev/null 2>&1 && return 0
+    docker image inspect "$up:latest" >/dev/null 2>&1 && return 0
+    echo "    (fetching the checkwork grader image in the background so your first checkwork is quick)"
+    ( docker pull -q "$up:latest" >"$CFG/grader-pull.log" 2>&1 || true ) &
+  fi
+}
+
+if [ "${RESET_LAB:-0}" = 1 ]; then step "Resetting $LAB (--reset): discarding its containers and networks..."; reset_lab_instance; fi
 refresh_images
 
 # ---- lab manual bridge: serve the manual over http://127.0.0.1 so its Check Work / Stop Lab /
@@ -996,6 +1103,11 @@ lab_tmux() {
   done
   [ "$made" -gt 0 ] || { echo "no visible terminals for '$LAB' -- is it running?"; return 1; }
   tmux set -t "$SESSION" mouse on >/dev/null 2>&1 || true
+  # vi keys everywhere (course rule): copy-mode/scrollback navigation with hjkl / / ? / v / y, and
+  # vi editing on the tmux command prompt; the mouse stays on for selection and pane focus.
+  tmux set -t "$SESSION" mode-keys vi >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-keys vi >/dev/null 2>&1 || true
+  tmux set -g mode-keys vi >/dev/null 2>&1 || true
   tmux set -t "$SESSION" status-right "" >/dev/null 2>&1 || true   # no clock/date on the lab status line
   if command -v xclip >/dev/null 2>&1; then
     tmux set -g copy-command 'xclip -selection clipboard -in' >/dev/null 2>&1 || true
@@ -1135,7 +1247,15 @@ reset_x_broken_containers() {
   done
   [ ${#bad[@]} -gt 0 ] || return 0
   echo "donlab: ${bad[*]} was created without the X display mount (GUI apps like Firefox could not open a"
-  echo "        window). Recreating the lab so they can -- work inside the old containers is not carried over."
+  echo "        window). Recreating the lab fixes that -- but work inside the old containers is not carried over."
+  # Same rule as the image-update path: never discard a student's instance without asking. An
+  # interactive student may keep the instance (GUI apps stay blind until they reset); non-interactive
+  # callers (CI, the harness) get the repair, as before.
+  if [ -t 0 ]; then
+    local ans
+    read -r -p "        Recreate the lab now (discards the old containers)? [recreate/keep] (keep) " ans
+    case "${ans,,}" in recreate|reset|r|yes|y) ;; *) echo "        Keeping your current instance (GUI apps cannot display in it; reset later with: donlab --reset $LAB)."; return 0 ;; esac
+  fi
   "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
   docker rm -f $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null) >/dev/null 2>&1 || true
   for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do docker network rm "$net" >/dev/null 2>&1 || true; done
