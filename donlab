@@ -42,7 +42,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.17'
+DONLAB_VERSION='1.3.16'
 for _a in "$@"; do case "$_a" in
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
@@ -962,7 +962,7 @@ refresh_images() {
     echo "        everything you did inside the old containers is discarded (checkwork results are kept)."
     echo "        To keep working where you left off, choose keep; you can reset later with: donlab --reset $LAB"
     local ans
-    read -r -p "        Reset to the new images now? [(r)eset/(k)eep] (keep) " ans
+    read -r -p "        Reset to the new images now? [reset/keep] (keep) " ans
     case "${ans,,}" in reset|r|yes|y) ;; *) echo "        Keeping your current instance."; return 0 ;; esac
   fi
   echo "        Resetting the previous instance so the lab starts on the new images."
@@ -1253,7 +1253,7 @@ reset_x_broken_containers() {
   # callers (CI, the harness) get the repair, as before.
   if [ -t 0 ]; then
     local ans
-    read -r -p "        Recreate the lab now (discards the old containers)? [(r)ecreate/(k)eep] (keep) " ans
+    read -r -p "        Recreate the lab now (discards the old containers)? [recreate/keep] (keep) " ans
     case "${ans,,}" in recreate|reset|r|yes|y) ;; *) echo "        Keeping your current instance (GUI apps cannot display in it; reset later with: donlab --reset $LAB)."; return 0 ;; esac
   fi
   "$(dirname "$LT")/stoplab" "$LAB" >/dev/null 2>&1 || true
