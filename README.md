@@ -292,46 +292,53 @@ work and start the lab from scratch: `./donlab <lab> -r`.
 
 ## 5. Troubleshooting
 
-**Re-running is safe.** `./donlab <lab>` on a lab that is already running or stopped resumes
-it. The bundle and image checks are no-ops when nothing changed, and the tmux layout is
-rebuilt from the running containers.
+**Can I run `./donlab <lab>` again on a lab that is already running or stopped?**
+Yes. It resumes the lab. The bundle and image checks are no-ops when nothing changed, and
+the tmux layout is rebuilt from the running containers.
 
-**No network.** The self-update and the bundle check are skipped with a `WARN: ... using
-installed version` line, and the lab starts from the installed bundle and the images already
-on the VM. The first start of a lab does need network access, to pull its images. On UTM,
-a VM that shows `Network is unreachable` after the Mac slept needs a shutdown and restart;
-keep the network mode at Emulated VLAN.
+**What happens if the VM has no network?**
+The self-update and the bundle check are skipped with a `WARN: ... using installed
+version` line, and the lab starts from the installed bundle and the images already on the
+VM. The first start of a lab does need network access to pull its images. On UTM, a VM that
+shows `Network is unreachable` after the Mac slept needs a shutdown and restart; keep the
+network mode at Emulated VLAN.
 
-**The launcher from this repository says `WARN: decrypt failed; using installed version`.**
-That is the keyless copy. Use the `donlab` posted on the LMS.
+**The launcher says `WARN: decrypt failed; using installed version`. Why?**
+You are running the keyless copy from this repository. Use the `donlab` posted on the LMS.
 
-**The VM rebooted during the first run.** Expected on a fresh appliance (i3 session switch,
-and on older appliances the cgroup v2 conversion). Log in again and re-run `./donlab <lab>`.
+**The VM rebooted during the first run. Is something wrong?**
+No. A fresh appliance reboots once after the launcher switches the login session to i3,
+and an older appliance reboots once more after the cgroup v2 conversion. Log in again and
+re-run `./donlab <lab>`.
 
-**A lab update renamed or added hosts and the start fails or comes up short.** The launcher
-prunes files left over from a previous version of the lab and drops the framework's cached
-copy of the lab configuration when the host list changed, on every run. If a start still
-fails, run `stoplab <lab>` and start again.
+**A lab update renamed or added hosts and the start fails or comes up short. What now?**
+The launcher prunes files left over from a previous version of the lab and drops the
+framework's cached copy of the lab configuration when the host list changed, on every run.
+If a start still fails, run `stoplab <lab>` and start again.
 
-**`Already exists` or a leftover network blocks the start.** The launcher stops the leftover
-lab, removes the blocking Docker network and retries once, printing what it cleared. If the
-lab still does not start it prints the last log lines of each container that is not
-running. Run `stoplab <lab>`, then `./donlab <lab>` again; `./donlab --reset <lab>` discards
-the lab's containers and networks entirely.
+**The start fails with `Already exists` or a leftover network. What now?**
+The launcher stops the leftover lab, removes the blocking Docker network and retries once,
+printing what it cleared. If the lab still does not start it prints the last log lines of
+each container that is not running. Run `stoplab <lab>`, then `./donlab <lab>` again.
+`./donlab --reset <lab>` discards the lab's containers and networks entirely.
 
-**Firefox or Wireshark from inside a lab does not open.** GUI programs in the containers
-display on the VM's desktop, so run the launcher from a terminal in the desktop session, not
-over plain SSH. `./donlab --doctor` reports whether the display and clipboard are reachable.
+**Firefox or Wireshark inside a lab does not open. Why?**
+GUI programs in the containers display on the VM's desktop, so run the launcher from a
+terminal in the desktop session, not over plain SSH. `./donlab --doctor` reports whether
+the display and clipboard are reachable.
 
-**The manual's Check Work or Stop Lab buttons do nothing.** They need the local helper the
-launcher starts, and they work only in the Firefox running on the same VM as the lab.
-Run `checkwork <lab>` or `stoplab <lab>` in the terminal instead.
+**The manual's Check Work or Stop Lab buttons do nothing. Why?**
+They need the local helper the launcher starts, and they work only in the Firefox running
+on the same VM as the lab. Run `checkwork <lab>` or `stoplab <lab>` in the terminal instead.
 
-**Where is everything?** Labs run from `$LABTAINER_DIR/scripts/labtainer-student`; the
-installed lab definitions and manuals are under `$LABTAINER_DIR/labs/<lab>/` (the manual is
-`docs/<lab>.html`); submission archives are under `~/labtainer_xfer/<lab>/`; the launcher's
-state is under `~/.config/don-range/`.
+**Where is everything?**
+Labs run from `$LABTAINER_DIR/scripts/labtainer-student`. The installed lab definitions and
+manuals are under `$LABTAINER_DIR/labs/<lab>/` (the manual is `docs/<lab>.html`).
+Submission archives are under `~/labtainer_xfer/<lab>/`. The launcher's state is under
+`~/.config/don-range/`.
 
-For framework problems not covered here, see the
+**My problem is not listed here.**
+For framework problems see the
 [Labtainers Student Guide](https://github.com/mfthomps/Labtainers/raw/master/docs/student/labtainer-student.pdf)
-and the NPS [support page](https://nps.edu/web/c3o/support1).
+and the NPS [support page](https://nps.edu/web/c3o/support1). For anything about the DoN
+Range labs or the launcher, contact your instructor.
