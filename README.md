@@ -233,9 +233,9 @@ tmux keys:
 
 ![donlab second run: bundle and images up to date, scenario brief, manual URL, tmux hint](docs/img/donlab-run.png)
 
-*Captured on a development machine, so the Labtainers tree sits under a temporary path
-and the i3 switch is skipped. On the appliance the paths are under
-`/home/student/labtainer`.*
+*Captured on a development machine, so the i3 switch is skipped and the manual path
+shown in the second image has been replaced with the appliance path
+(`/home/student/labtainer/trunk/labs/<lab>/docs/<lab>.html`).*
 
 ### 4.3 The manual
 
