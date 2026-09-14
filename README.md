@@ -11,8 +11,7 @@ The sections below take you from nothing installed to a running lab.
 2. [Get a Labtainers VM running](#2-get-a-labtainers-vm-running)
 3. [First boot: verify that Labtainers works](#3-first-boot-verify-that-labtainers-works)
 4. [Running a lab with the donlab launcher](#4-running-a-lab-with-the-donlab-launcher)
-5. [Lab ids](#5-lab-ids)
-6. [Troubleshooting](#6-troubleshooting)
+5. [Troubleshooting](#5-troubleshooting)
 
 ## 1. Which image do I use?
 
@@ -291,32 +290,7 @@ work and start the lab from scratch: `./donlab <lab> -r`.
 | `./donlab --reset <lab>` | Discard the lab's containers and networks, then start it fresh. |
 | `DONLAB_NO_PULL=1 ./donlab <lab>` | Skip the registry check for updated images for this run. |
 
-## 5. Lab ids
-
-Use the id in the first column with `./donlab`. Your instructor tells you which labs are
-assigned; `labtainer` with no arguments lists the labs installed on your VM.
-
-| Lab id | Title |
-|---|---|
-| `cs3600-lab2` | CS3600 Lab2: Understanding the Staged Ciphertext |
-| `cs3600-lab3` | CS3600 Lab3: Integrity, MACs, and Intercepted Traffic |
-| `cs3600-lab4` | CS3600 Lab4: Reading Certificates and the Chain of Trust |
-| `cs3600-lab5` | CS3600 Lab5: Reconstructing the Credential Compromise |
-| `cs3600-lab6` | CS3600 Lab6: Recovering the Insider's Deleted Evidence |
-| `cs3600-lab7` | CS3600 Lab7: Stack Buffer Overflow: Weaponizing a Vulnerable Fleet Utility |
-| `cs3670-lab1` | CS3670 Lab1: Risk, Classification, and the System Security Plan |
-| `cs3670-lab2` | CS3670 Lab2: Initial OS Configuration and Hardening |
-| `cs3670-lab3` | CS3670 Lab3: Logging and Log Analysis |
-| `cs3670-lab4` | CS3670 Lab4: Permissions, Traversal, and Password Hygiene |
-| `cs3670-lab5` | CS3670 Lab5: Hunting a Leaked Credential |
-| `cs3670-lab6` | CS3670 Lab6: Personnel Security and Access: the SAAR Desk |
-| `cs3670-lab8` | CS3670 Lab8: Integrity, Off-host Backup, and Ransomware Recovery |
-| `cs3670-lab9` | CS3670 Lab9: Endpoint and Mobile Device Management (UEM/MDM) |
-| `cs3670-lab10` | CS3670 Lab10: Cloud Infrastructure Security |
-| `cs3690-lab1` | CS3690 Lab1: Where Did the Fleet-Support Files Go? |
-| `cs3690-lab3` | CS3690 Lab3: Something Is Scanning the Server VLAN |
-
-## 6. Troubleshooting
+## 5. Troubleshooting
 
 **Re-running is safe.** `./donlab <lab>` on a lab that is already running or stopped resumes
 it. The bundle and image checks are no-ops when nothing changed, and the tmux layout is
