@@ -111,18 +111,26 @@ UTM:
 3. Verify it: in Terminal, `shasum -a 256 ~/Downloads/<file>.utm.zip`, and compare with the
    `.sha256` file beside it.
 4. Unzip the file. You get a `.utm` bundle.
-5. Double-click the `.utm` bundle (or in UTM choose **File > Open**). UTM imports it into its
-   library. The bundle is pre-configured: **Virtualize**, **aarch64**, 4 cores, 8 GB RAM,
-   UEFI boot, **Emulated VLAN** networking, and clipboard sharing with macOS. Do not change
-   the architecture, reduce the memory below 8 GB, or switch the network mode.
-6. Start the VM and log in with the credentials supplied with the download.
+5. Open UTM. On the welcome screen click the **+** button in the toolbar or the
+   **Create a New Virtual Machine** tile (either one opens the Start sheet).
 
-![UTM library with a VM selected and its settings summary](docs/img/utm-library.png)
+   ![UTM welcome screen with the + button and the Create a New Virtual Machine tile highlighted](docs/img/utm-1-welcome.png)
 
-*The UTM library after an import: the VM in the list on the left, its settings summary on
-the right, and the Start button in the toolbar. Screenshot from the UTM project site
-([utmapp/mac.getutm.app](https://github.com/utmapp/mac.getutm.app), MIT); the imported
-Labtainers VM appears in the same way.*
+6. In the Start sheet, under **Existing**, click **Open...**. Choose the `.utm` bundle you
+   unzipped, from wherever you saved it on your Mac (for example your Downloads folder).
+   Double-clicking the `.utm` bundle in Finder does the same thing.
+
+   ![UTM Start sheet with the Open link under Existing highlighted](docs/img/utm-2-open.png)
+
+7. The VM appears in the library as **Labtainers ARM** with its settings summary. The bundle
+   is pre-configured: **Virtualize**, **aarch64**, 4 cores, 8 GB RAM, UEFI boot, **Emulated
+   VLAN** networking, and clipboard sharing with macOS. Do not change the architecture,
+   reduce the memory below 8 GB, or switch the network mode.
+
+   ![UTM library with the imported Labtainers ARM VM selected](docs/img/utm-3-library.png)
+
+8. Click the Start button (the triangle in the toolbar, or on the VM's row) and log in with
+   the credentials supplied with the download.
 
 VirtualBox (7.1 or newer for Apple Silicon) or VMware Fusion: import the `.ova` as-is.
 Fusion downloads require a Broadcom account. Both support snapshots; UTM does not, so keep a
