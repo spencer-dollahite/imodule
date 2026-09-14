@@ -252,45 +252,13 @@ the PDF you submit.
 
 ### 4.4 The tmux layout
 
-Each host is a tmux window; the window name is the host name. A single-host lab:
-
-![tmux session for cs3670-lab1 with one window, hi-issm01](docs/img/tmux-single-host.png)
-
-A lab with several hosts. The status line at the bottom lists the windows:
+The launcher lays the lab out in one tmux session, one window per host, named after the
+host. The status line at the bottom lists the windows:
 
 ![tmux session for cs3670-lab2 with windows hi-web01, hi-web02 and hardening-cn](docs/img/tmux-multi-host.png)
 
-Every tmux command starts with the prefix `Ctrl-b`: press and release it, then press the
-next key.
-
-| Keys | Action |
-|---|---|
-| `Ctrl-b n` / `Ctrl-b p` | next / previous window (host) |
-| `Ctrl-b 0` ... `Ctrl-b 9` | jump to a window by number |
-| `Ctrl-b w` | pick a window from a list (vertical, scrollable, with a preview) |
-| `Ctrl-b c` | create a new window |
-| `Ctrl-b "` / `Ctrl-b %` | split the current host top/bottom or left/right; the new pane is a shell on the same host |
-| `Ctrl-b` arrow keys | move between panes |
-| `Ctrl-b z` | zoom a pane full-screen (toggle) |
-| `Ctrl-b x` | close the current pane |
-| `Ctrl-b [` | scroll/copy mode (arrows, PgUp; `q` to exit); the mouse wheel also scrolls |
-| `Ctrl-b d` | detach; the lab keeps running |
-| `tmux attach -t lab-<lab>` | re-attach after detaching (re-running `./donlab <lab>` also works) |
-
-`Ctrl-b w`, the window picker:
-
-![tmux window picker listing the three hosts of cs3670-lab2](docs/img/tmux-window-picker.png)
-
-`Ctrl-b "`, a second shell on the same host:
-
-![tmux window split into two panes on hi-web01](docs/img/tmux-split-pane.png)
-
+The tmux keys and the i3 desktop are covered in the FAQ at the bottom of every lab manual.
 Prefer the framework's separate pop-up terminal windows? Run `./donlab <lab> --no-tmux`.
-
-Under i3 the modifier is the Super (Windows or Command) key: `Super+Enter` opens a
-terminal, `Super+w` opens Firefox, `Super+f` toggles the focused window full screen,
-`Super+Shift+q` closes it, and the shell helper `cdlab` changes to the Labtainers workspace
-directory. The FAQ at the bottom of every lab manual has the full list.
 
 ### 4.5 Stop the lab and submit
 
