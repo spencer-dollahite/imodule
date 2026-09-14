@@ -221,8 +221,7 @@ What happens, in order (each step prints a `==>` line):
 4. **Start.** It runs `labtainer <lab>`. The first start of a lab downloads that lab's
    container images and can take several minutes. The framework then shows the scenario
    brief and waits for Enter.
-5. **Manual.** It opens the lab manual in Firefox, served from a local helper on
-   `127.0.0.1` so the manual's Check Work and Stop Lab buttons can drive the real commands.
+5. **Manual.** It opens the lab manual in Firefox.
 6. **Layout.** It lays the lab out in one tmux session: one window per host you use, one
    pane per terminal that host was given, and attaches you to it.
 
