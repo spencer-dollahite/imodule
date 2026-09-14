@@ -45,13 +45,30 @@ VirtualBox:
 2. Download the VirtualBox appliance (`LabtainerVM24a-VirutalBox.ova` at the time of
    writing; the file name is spelled that way on the NPS page).
 3. Compare the file's SHA-256 checksum with the value on the NPS page.
-4. In VirtualBox choose **File > Import Appliance**, select the `.ova` file, accept the
-   defaults and click **Import**.
-5. Start the VM.
+4. In VirtualBox choose **File > Import Appliance** (the **Import** toolbar button does the
+   same).
 
-![TODO: screenshot of the VirtualBox File > Import Appliance dialog with the Labtainers .ova selected](docs/img/TODO-virtualbox-import.png)
+   ![VirtualBox File menu with Import Appliance](docs/img/virtualbox-file-menu.png)
 
-*VirtualBox, File > Import Appliance with the Labtainers `.ova` selected.*
+5. Leave **Source** at Local File System, pick the `.ova` in the **File** field and click
+   **Next**.
+
+   ![Import Virtual Appliance, Appliance to import page, with the .ova path in the File field](docs/img/virtualbox-import-2-file.png)
+
+6. The **Appliance settings** page lists the VM the file contains. Accept the defaults and
+   click **Finish**.
+
+   ![Import Virtual Appliance, Appliance settings page](docs/img/virtualbox-import-3-settings.png)
+
+7. The import runs for a few minutes; the progress shows in the notification panel on the
+   right of the main window. The VM then appears in the list on the left.
+
+   ![Importing appliance progress](docs/img/virtualbox-import-4-progress.png)
+
+8. Select the VM and click **Start**.
+
+*The screenshots show VirtualBox 7.1 importing our arm64 `.ova`; the NPS x86_64 file goes
+through the same dialogs.*
 
 VMware (Workstation, Player or Fusion):
 
