@@ -318,6 +318,8 @@ work and start the lab from scratch: `./donlab <lab> -r`.
 | `./donlab -u` | Force a self-update check now and report the outcome. |
 | `./donlab --update-labtainers` | Run the NPS `update-labtainer.sh` framework updater. |
 | `./donlab --reset <lab>` | Discard the lab's containers and networks, then start it fresh. |
+| `./donlab --clean` | Free disk space: old lab images, stopped lab containers, Docker build cache and the framework's temp copies. Running labs, installed labs' images and `~/labtainer_xfer` (your `.lab` archives, grades and reports) are left alone. |
+| `./donlab -h` | Print the usage text. |
 | `DONLAB_NO_PULL=1 ./donlab <lab>` | Skip the registry check for updated images for this run. |
 
 ## 5. Troubleshooting
