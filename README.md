@@ -163,11 +163,31 @@ own it cannot decrypt the lab bundle. Use the copy from the LMS.
 1. Get `donlab` into the VM. Practical ways:
    - Open Firefox inside the VM, log in to the LMS and download it there (no host-to-VM
      transfer needed).
+   - Paste it in with vim. On the host, open the `donlab` file from the LMS in a text
+     editor and copy its entire contents. In the VM:
+
+     ```bash
+     cd $LABTAINER_DIR/scripts/labtainer-student
+     vim donlab
+     ```
+
+     In vim type `:set paste` and press Enter, press `i`, paste the clipboard into the
+     terminal, press `Esc`, then type `:wq` and press Enter. Make it executable and let it
+     fetch and verify its own published copy:
+
+     ```bash
+     chmod +x donlab
+     ./donlab -u
+     ```
+
+     `-u` forces the self-update: the launcher downloads the published copy from this
+     repository, checks its checksum, keeps your key, and replaces the pasted file. A
+     successful `-u` confirms the paste was intact. Then go on to section 4.2.
    - Drag and drop, or a shared folder, if your hypervisor's guest tools are installed
      (VirtualBox Guest Additions, VMware Tools; UTM shares the clipboard, not files, by
      default).
-   - `scp` from the host, if the VM has SSH enabled.
-2. Put it in the Labtainers workspace directory and make it executable:
+2. If you downloaded or copied the file rather than pasting it, put it in the Labtainers
+   workspace directory and make it executable:
 
    ```bash
    mv ~/Downloads/donlab $LABTAINER_DIR/scripts/labtainer-student/
