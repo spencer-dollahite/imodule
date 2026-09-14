@@ -229,14 +229,6 @@ The first time you start any lab the framework asks for your e-mail address. It 
 of the file name of your submission archive, so use the address your instructor specifies
 (your official institution e-mail is a good default unless told otherwise).
 
-First run on a fresh appliance. `donlab` is opinionated about the desktop: run from the
-appliance's default XFCE session it installs the i3 tiling window manager, makes it the
-login session and reboots the VM once. On an older appliance that boots with the legacy
-cgroup v1 layout it converts the VM to cgroup v2 and reboots once more. It also installs
-tmux, vim and clipboard helpers with `sudo apt-get` (the appliance's sudo asks for your
-password). Re-run `./donlab <lab>` after each reboot. `--no-i3` (or
-`export DONLAB_NO_I3=1`) keeps your current desktop.
-
 The first start, showing the bundle download and installation followed by the image pull:
 
 ![donlab first run: bundle downloaded and installed, lab image pulled](docs/img/donlab-first-run.png)
