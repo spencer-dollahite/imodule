@@ -5,12 +5,6 @@ This repository is the distribution point for the instructor-provided Labtainers
 CS3670 and CS3690. The launcher fetches what it needs from here at every lab start.
 Students do not need to clone this repository.
 
-| File | Purpose |
-|---|---|
-| `imodule.tar.enc`, `imodule.tar.enc.sha256` | The encrypted lab bundle (lab definitions, manuals, grading). `donlab` downloads, verifies and installs it. |
-| `donlab`, `donlab.sha256` | The keyless copy of the launcher, used only by the launcher's self-update. It cannot decrypt the bundle on its own (see [section 4](#4-running-a-lab-with-the-donlab-launcher)). |
-| `DON-RANGE.md` | Notes for instructors. |
-
 The sections below take you from nothing installed to a running lab.
 
 1. [Which image do I use?](#1-which-image-do-i-use)
