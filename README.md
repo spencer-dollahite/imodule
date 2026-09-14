@@ -124,8 +124,9 @@ UTM:
 
 7. The VM appears in the library as **Labtainers ARM** with its settings summary. The bundle
    is pre-configured: **Virtualize**, **aarch64**, 4 cores, 8 GB RAM, UEFI boot, **Emulated
-   VLAN** networking, and clipboard sharing with macOS. Do not change the architecture,
-   reduce the memory below 8 GB, or switch the network mode.
+   VLAN** networking, and clipboard sharing with macOS. These are sensible defaults for
+   most Macs. Change them only if you know what you are doing, want to raise the CPU or
+   memory above the minimums, or are troubleshooting a problem.
 
    ![UTM library with the imported Labtainers ARM VM selected](docs/img/utm-3-library.png)
 
