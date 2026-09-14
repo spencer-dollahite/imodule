@@ -1205,13 +1205,13 @@ ensure_xhost() {
   xhost +local: >/dev/null 2>&1 || true
 }
 
-# ---- i3 status bar: Disk / Mem / clock with seconds (YYYY-MM-DD HH:MM:SS TZ) -----------------------------------
+# ---- i3 status bar: Disk / Mem / clock with seconds (YYYY-MM-DD HH:MM:SS Z, forced UTC/Zulu) ------------------
 # Stock i3status shows disk/load/memory/network -- noise on a lab VM. Write a user-level i3status
 # config once (marker), then restart i3 in place (layout preserved) so i3bar picks it up. i3 only;
 # XFCE/GNOME have their own panels. Opt out with DONLAB_NO_STATUSBAR=1; edit
 # ~/.config/i3status/config to customize (donlab will not override a config that exists).
 ensure_i3_statusbar() {
-  local cfg="$HOME/.config/i3status/config" stamp="# managed by donlab (i3status v4)" old138
+  local cfg="$HOME/.config/i3status/config" stamp="# managed by donlab (i3status v5)" old138
   [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_STATUSBAR:-}" ] || return 0
   [ "$(detect_desktop)" = i3 ] || return 0
   [ -f "$cfg" ] && grep -qs "^$stamp" "$cfg" && return 0          # already current
@@ -1220,7 +1220,7 @@ ensure_i3_statusbar() {
   old138='general {\n    colors = true\n    interval = 5\n    output_format = "i3bar"\n}\norder += "tztime local"\ntztime local {\n    format = "%Y-%m-%d %H:%M %Z"\n}\n'
   if [ -f "$cfg" ] && [ "$(cat "$cfg")" != "$(printf '%b' "$old138")" ] && ! grep -qs "managed by donlab" "$cfg"; then return 0; fi
   mkdir -p "$(dirname "$cfg")"
-  printf '%s\ngeneral {\n    colors = true\n    color_degraded = "#ffff00"\n    color_bad = "#ff0000"\n    interval = 1\n    output_format = "i3bar"\n}\norder += "disk /"\norder += "memory"\norder += "tztime local"\ndisk / {\n    format = "Disk: %%percentage_used"\n    low_threshold = 20\n    threshold_type = "percentage_free"\n}\nmemory {\n    format = "Mem: %%percentage_used"\n    threshold_degraded = "30%%"\n    threshold_critical = "20%%"\n}\ntztime local {\n    format = "%%Y-%%m-%%d %%H:%%M:%%S %%Z"\n}\n' "$stamp" > "$cfg"
+  printf '%s\ngeneral {\n    colors = true\n    color_degraded = "#ffff00"\n    color_bad = "#ff0000"\n    interval = 1\n    output_format = "i3bar"\n}\norder += "disk /"\norder += "memory"\norder += "tztime local"\ndisk / {\n    format = "Disk: %%percentage_used"\n    low_threshold = 20\n    threshold_type = "percentage_free"\n}\nmemory {\n    format = "Mem: %%percentage_used"\n    threshold_degraded = "30%%"\n    threshold_critical = "20%%"\n}\ntztime local {\n    format = "%%Y-%%m-%%d %%H:%%M:%%S Z"\n    timezone = "UTC"\n}\n' "$stamp" > "$cfg"
   command -v i3-msg >/dev/null 2>&1 && i3-msg restart >/dev/null 2>&1 || true
   echo "donlab: i3 status bar set to Disk / Mem / clock with seconds (edit ~/.config/i3status/config to change)."
 }
