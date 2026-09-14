@@ -79,9 +79,7 @@ VMware (Workstation, Player or Fusion):
    `.ova` file and accept the defaults.
 5. Start the VM.
 
-![TODO: screenshot of the VMware File > Open / Import dialog with the Labtainers .ova selected](docs/img/TODO-vmware-import.png)
-
-*VMware, File > Open (or Import) with the Labtainers `.ova` selected.*
+<!-- TODO screenshot: VMware File > Open / Import dialog with the Labtainers .ova selected (docs/img/vmware-import.png) -->
 
 The appliance is configured to not perform Ubuntu system updates automatically. Decline the
 update prompt if one appears; the updates are not needed for the labs.
@@ -119,9 +117,12 @@ UTM:
    the architecture, reduce the memory below 8 GB, or switch the network mode.
 6. Start the VM and log in with the credentials supplied with the download.
 
-![TODO: screenshot of the UTM library showing the imported Labtainers arm64 VM and its settings summary](docs/img/TODO-utm-import.png)
+![UTM library with a VM selected and its settings summary](docs/img/utm-library.png)
 
-*UTM with the imported arm64 appliance selected.*
+*The UTM library after an import: the VM in the list on the left, its settings summary on
+the right, and the Start button in the toolbar. Screenshot from the UTM project site
+([utmapp/mac.getutm.app](https://github.com/utmapp/mac.getutm.app), MIT); the imported
+Labtainers VM appears in the same way.*
 
 VirtualBox (7.1 or newer for Apple Silicon) or VMware Fusion: import the `.ova` as-is.
 Fusion downloads require a Broadcom account. Both support snapshots; UTM does not, so keep a
@@ -139,7 +140,7 @@ start it again.
    Guide notes that the prepackaged VMs then open a terminal in the Labtainers workspace
    directory, with some hints.
 
-![TODO: screenshot of the appliance login screen, then the desktop with the terminal that opens after first boot](docs/img/TODO-first-boot.png)
+<!-- TODO screenshot: appliance first boot, login screen and desktop (docs/img/first-boot.png) -->
 
 *First boot: login screen and the terminal the appliance opens.*
 
