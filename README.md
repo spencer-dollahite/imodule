@@ -292,6 +292,10 @@ work and start the lab from scratch: `./donlab <lab> -r`.
 
 ## 5. Troubleshooting
 
+If a problem is not resolved by the answers below, spend 5 to 15 minutes at most searching
+the internet or asking an AI assistant on your own. If it is still unresolved after that,
+reach out to your instructor rather than continuing to struggle with it.
+
 **Can I run `./donlab <lab>` again on a lab that is already running or stopped?**
 Yes. It resumes the lab. The bundle and image checks are no-ops when nothing changed, and
 the tmux layout is rebuilt from the running containers.
