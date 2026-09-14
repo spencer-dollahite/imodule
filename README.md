@@ -136,7 +136,7 @@ UTM:
 UTM does not support snapshots. If you want snapshots, consider VMware Fusion or
 VirtualBox instead (import the `.ova`). Otherwise, in UTM you can clone the VM to keep a
 copy of its current state, or keep the original `.utm` bundle as a clean state to start
-from again.
+from again. Either way, clone or snapshot before big changes that might break things.
 
 If the VM loses its network after the Mac sleeps or changes Wi-Fi, shut the VM down and
 start it again.
