@@ -233,10 +233,6 @@ The first start, showing the bundle download and installation followed by the im
 
 ![donlab first run: bundle downloaded and installed, lab image pulled](docs/img/donlab-first-run.png)
 
-A later start of the same lab. The bundle and image checks are no-ops, the framework
-resumes the lab, prints the scenario brief, and the launcher reports the manual URL and the
-tmux keys:
-
 ![donlab second run: bundle and images up to date, scenario brief, manual URL, tmux hint](docs/img/donlab-run.png)
 
 *Captured on a development machine, so the i3 switch is skipped and the manual path
