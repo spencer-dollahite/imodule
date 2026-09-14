@@ -226,7 +226,8 @@ What happens, in order (each step prints a `==>` line):
    pane per terminal that host was given, and attaches you to it.
 
 The first time you start any lab the framework asks for your e-mail address. It becomes part
-of the file name of your submission archive, so use the address your instructor specifies.
+of the file name of your submission archive, so use the address your instructor specifies
+(your official institution e-mail is a good default unless told otherwise).
 
 First run on a fresh appliance. `donlab` is opinionated about the desktop: run from the
 appliance's default XFCE session it installs the i3 tiling window manager, makes it the
