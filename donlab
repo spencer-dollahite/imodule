@@ -42,8 +42,22 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.17'
+DONLAB_VERSION='1.3.18'
+usage() {
+  echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
+  echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"
+  echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"
+  echo "       donlab --reset <labname>      # discard this lab's containers and start it fresh"
+  echo "       donlab --doctor               # check this VM is ready to run labs (X, clipboard, docker, registry)"
+  echo "       donlab --clean                # free disk: old lab images, stopped lab containers, build cache, temp copies"
+  echo "                                     # (never touches ~/labtainer_xfer: .lab archives, grades, reports)"
+  echo "       donlab -v|--version           # print the donlab version"
+  echo "       donlab -h|--help              # this text"
+  echo "options: --no-tmux (classic pop-up terminals)  --no-i3 (keep your desktop)"
+  echo "env:     DONLAB_NO_PULL=1 (skip the registry check)  DONLAB_NOSELFUPDATE=1 (skip the self-update)"
+}
 for _a in "$@"; do case "$_a" in
+  -h|--help) usage; exit 0 ;;
   -v|--version)
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
     exit 0 ;;
@@ -643,6 +657,7 @@ USE_TMUX=1
 NO_I3=0
 UPDATE_LT=0
 DOCTOR=0
+CLEAN=0
 PASS=()
 for a in "$@"; do
   case "$a" in
@@ -650,18 +665,14 @@ for a in "$@"; do
     --no-i3)         NO_I3=1 ;;
     --reset)         RESET_LAB=1 ;;
     --doctor|--check)   DOCTOR=1 ;;
+    --clean)         CLEAN=1 ;;
     --tmux)          USE_TMUX=1 ;;
     --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
   esac
 done
-if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ]; then
-  [ ${#PASS[@]} -ge 1 ] || { echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"; \
-    echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"; \
-    echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"; \
-    echo "       donlab --reset <labname>      # discard this lab's containers and start it fresh"; \
-    echo "       donlab --doctor               # check this VM is ready to run labs (X, clipboard, docker, registry)"; \
-    echo "       donlab -v|--version           # print the donlab version"; exit 1; }
+if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ]; then
+  [ ${#PASS[@]} -ge 1 ] || { usage; exit 1; }
   LAB="${PASS[0]}"
 fi
 
@@ -807,6 +818,68 @@ run_doctor() {
   else echo "doctor: all checks passed -- this VM is ready to run labs."; return 0; fi
 }
 if [ "${DOCTOR:-0}" = 1 ]; then run_doctor; exit $?; fi
+
+# ---- --clean: free disk without touching student results ---------------------------------
+# Removes: stopped lab containers (+ their lab networks), the checkwork grader containers,
+# superseded (untagged) images left behind by image updates, the framework's .tmp relabel
+# wrapper images, images of labs that are no longer installed, Docker's build cache, and the
+# framework's cached parameterized lab copies. Leaves alone: RUNNING labs, the images of every
+# installed lab (so nothing is re-downloaded), and ~/labtainer_xfer (the .lab archives, grades and
+# reports). Work INSIDE a stopped lab's containers is discarded: stoplab already wrote its .lab.
+# DONLAB_CLEAN_DRY=1 only reports what would be removed.
+run_clean() {
+  local dry="${DONLAB_CLEAN_DRY:-}" before after n=0 c lab labs=() running lsdir sc net img
+  local xfer="$HOME/labtainer_xfer"
+  echo "donlab --clean: old lab images, stopped lab containers, build cache and temp copies."
+  echo "        Kept: running labs, installed labs' images, and $xfer (.lab archives, grades, reports)."
+  [ -n "$dry" ] && echo "        (dry run: nothing is removed)"
+  before=$(df -k --output=avail "$HOME" 2>/dev/null | tail -1)
+  running="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '\.student$' | cut -d. -f1 | sort -u)"
+  [ -n "$running" ] && echo "  running labs left untouched: $(printf '%s ' $running)"
+  # stopped lab containers (and the grader containers), grouped by lab
+  for c in $(docker ps -a --filter status=exited --filter status=created --filter status=dead --format '{{.Names}}' 2>/dev/null | grep -E '\.student$|-igrader$'); do
+    lab="${c%%.*}"; lab="${lab%-igrader}"
+    printf '%s\n' $running | grep -qx "$lab" && continue
+    echo "  container $c"; n=$((n+1))
+    [ -n "$dry" ] || docker rm -f "$c" >/dev/null 2>&1 || true
+    printf '%s\n' "${labs[@]}" | grep -qx "$lab" || labs+=("$lab")
+  done
+  # the networks of those labs (names from start.config, lowercased by the framework)
+  for lab in "${labs[@]}"; do
+    sc="$LTDIR/labs/$lab/config/start.config"; [ -f "$sc" ] || continue
+    for net in $(awk '/^[[:space:]]*NETWORK[[:space:]]/{print tolower($2)}' "$sc"); do
+      docker network inspect "$net" >/dev/null 2>&1 || continue
+      echo "  network $net"; [ -n "$dry" ] || docker network rm "$net" >/dev/null 2>&1 || true
+    done
+  done
+  # .tmp relabel wrappers and images of labs that are not installed any more
+  for img in $(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E '\.student(\.tmp)?:'); do
+    lab="${img##*/}"; lab="${lab%%.*}"
+    if [[ "$img" == *.student.tmp:* ]] || [ ! -d "$LTDIR/labs/$lab" ]; then
+      printf '%s\n' $running | grep -qx "$lab" && continue
+      echo "  image $img"; n=$((n+1))
+      [ -n "$dry" ] || docker rmi -f "$img" >/dev/null 2>&1 || true
+    fi
+  done
+  # superseded (untagged) images and the build cache
+  if [ -n "$dry" ]; then
+    echo "  dangling images: $(docker images -f dangling=true -q 2>/dev/null | wc -l)"
+  else
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -af >/dev/null 2>&1 || true
+  fi
+  # the framework's cached parameterized lab copies (regenerated at the next start)
+  lsdir="$(cd "$(dirname "$LT")/.." 2>/dev/null && pwd || true)"
+  if [ -n "$lsdir" ] && [ -d "$lsdir/.tmp" ]; then
+    echo "  framework temp: $lsdir/.tmp ($(du -sh "$lsdir/.tmp" 2>/dev/null | cut -f1))"
+    [ -n "$dry" ] || rm -rf "$lsdir/.tmp"
+  fi
+  after=$(df -k --output=avail "$HOME" 2>/dev/null | tail -1)
+  if [ -n "$dry" ]; then echo "donlab --clean: dry run done ($n container/image item(s) would be removed)."
+  else echo "donlab --clean: done. Freed $(( (after - before) / 1024 )) MB; $(( after / 1024 )) MB now free."; fi
+  return 0
+}
+if [ "${CLEAN:-0}" = 1 ]; then run_clean; exit $?; fi
 
 # framework-update mode: `donlab --update-labtainers` -- do it and exit (needs $LTDIR/$LS_DIR).
 if [ "$UPDATE_LT" = 1 ]; then update_labtainers; exit $?; fi
@@ -957,7 +1030,7 @@ refresh_images() {
   # what a reset means and let them keep the old instance (their containers keep running on the
   # image they were created from, even though the tag now points at the new build). Non-interactive
   # callers (CI, the harness) get the reset, as before.
-  if [ -n "$(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null)" ] && [ -t 0 ]; then
+  if [ -n "$(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null)" ] && [ -t 0 ] && had_prior_work; then
     echo "        You have an existing instance of this lab. Starting on the new images RESETS it:"
     echo "        everything you did inside the old containers is discarded (checkwork results are kept)."
     echo "        To keep working where you left off, choose keep; you can reset later with: donlab --reset $LAB"
@@ -967,6 +1040,18 @@ refresh_images() {
   fi
   echo "        Resetting the previous instance so the lab starts on the new images."
   reset_lab_instance
+}
+# Evidence that a student has WORKED in this lab: a lab container that was ever started, or a
+# results archive under ~/labtainer_xfer/<lab>/. With neither (a fresh box whose lab was created
+# but never run, or a first start after the images were pre-seeded) there is nothing to protect,
+# so the reset/recreate prompts below are skipped and the repair just happens.
+had_prior_work() {
+  local c
+  for c in $(docker ps -aq --filter "name=^$LAB\\." 2>/dev/null); do
+    [ "$(docker inspect -f '{{.State.StartedAt}}' "$c" 2>/dev/null)" != "0001-01-01T00:00:00Z" ] && return 0
+  done
+  ls "$HOME/labtainer_xfer/$LAB/"*.lab >/dev/null 2>&1 && return 0
+  return 1
 }
 # Discard the lab's containers and networks (NETWORK names in start.config, lowercased by the
 # framework) so the next start is fresh and does not log "Already exists! Not creating <net> subnet".
@@ -1251,7 +1336,7 @@ reset_x_broken_containers() {
   # Same rule as the image-update path: never discard a student's instance without asking. An
   # interactive student may keep the instance (GUI apps stay blind until they reset); non-interactive
   # callers (CI, the harness) get the repair, as before.
-  if [ -t 0 ]; then
+  if [ -t 0 ] && had_prior_work; then
     local ans
     read -r -p "        Recreate the lab now (discards the old containers)? [(r)ecreate/(k)eep] (keep) " ans
     case "${ans,,}" in recreate|reset|r|yes|y) ;; *) echo "        Keeping your current instance (GUI apps cannot display in it; reset later with: donlab --reset $LAB)."; return 0 ;; esac
