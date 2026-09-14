@@ -140,9 +140,11 @@ start it again.
    Guide notes that the prepackaged VMs then open a terminal in the Labtainers workspace
    directory, with some hints.
 
-<!-- TODO screenshot: appliance first boot, login screen and desktop (docs/img/first-boot.png) -->
+![arm64 appliance desktop after first boot, with the terminal open in the Labtainers workspace directory](docs/img/first-boot-desktop.png)
 
-*First boot: login screen and the terminal the appliance opens.*
+*The arm64 appliance after first boot: it logs in automatically and opens a terminal in the
+Labtainers workspace directory. The NPS x86_64 appliance shows a login screen first, then
+the same kind of terminal.*
 
 3. All labs are run from the workspace directory. If you open a new terminal, change to it
    first:
