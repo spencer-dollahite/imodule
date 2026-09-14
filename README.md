@@ -133,9 +133,10 @@ UTM:
 8. Click the Start button (the triangle in the toolbar, or on the VM's row) and log in with
    the credentials supplied with the download.
 
-VirtualBox (7.1 or newer for Apple Silicon) or VMware Fusion: import the `.ova` as-is.
-Fusion downloads require a Broadcom account. Both support snapshots; UTM does not, so keep a
-copy of the unzipped `.utm` bundle if you want a way to roll back.
+UTM does not support snapshots. If you want snapshots, consider VMware Fusion or
+VirtualBox instead (import the `.ova`). Otherwise, in UTM you can clone the VM to keep a
+copy of its current state, or keep the original `.utm` bundle as a clean state to start
+from again.
 
 If the VM loses its network after the Mac sleeps or changes Wi-Fi, shut the VM down and
 start it again.
