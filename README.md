@@ -183,17 +183,20 @@ reliable when labs overlap.
 
 ## 4. Running a lab with the donlab launcher
 
-`donlab` is a single script. You receive it from the course LMS. The copy in this
-repository is a keyless copy: it is what the launcher fetches to update itself, and on its
-own it cannot decrypt the lab bundle. Use the copy from the LMS.
+`donlab` is a single script. Your VM appliance already carries it; you can also take the
+copy from this repository or paste it in (section 4.1). The launcher is keyless: it holds no
+course key on its own. Each course has its own encrypted lab bundle, and you unlock the one
+for your course with the key your instructor gives you, installed once with
+`donlab --key <course>:<key>` (section 4.2). Without that key, the launcher will not unlock
+your course's labs.
 
 ### 4.1 Install the launcher
 
 1. Get `donlab` into the VM. Practical ways:
-   - Open Firefox inside the VM, log in to the LMS and download it there (no host-to-VM
-     transfer needed).
-   - Paste it in with vim. On the host, open the `donlab` file from the LMS in a text
-     editor and copy its entire contents. In the VM:
+   - Open Firefox inside the VM and download the published `donlab` from this repository,
+     or from a copy your instructor posted (no host-to-VM transfer needed).
+   - Paste it in with vim. On the host, open this repository's `donlab` file, or a copy your
+     instructor posted, in a text editor and copy its entire contents. In the VM:
 
      ```bash
      cd $LABTAINER_DIR/scripts/labtainer-student
@@ -210,8 +213,9 @@ own it cannot decrypt the lab bundle. Use the copy from the LMS.
      ```
 
      `-u` forces the self-update: the launcher downloads the published copy from this
-     repository, checks its checksum, keeps your key, and replaces the pasted file. A
-     successful `-u` confirms the paste was intact. Then go on to section 4.2.
+     repository, checks its checksum, keeps any course keys you have already installed, and
+     replaces the pasted file. A successful `-u` confirms the paste was intact. Then install
+     your course key (section 4.2).
    - Drag and drop, or a shared folder, if your hypervisor's guest tools are installed
      (VirtualBox Guest Additions, VMware Tools; UTM shares the clipboard, not files, by
      default).
@@ -228,7 +232,20 @@ own it cannot decrypt the lab bundle. Use the copy from the LMS.
    run from elsewhere, so another location in your home directory also works. The file must
    remain writable by you for the self-update to apply.
 
-### 4.2 Start a lab
+### 4.2 Install your course key
+
+Each course has its own encrypted lab bundle. Your instructor gives you a key for the course
+you are enrolled in; install it once, and the launcher keeps it through its self-updates:
+
+```bash
+./donlab --key cs3670:<key>
+```
+
+Use `cs3600`, `cs3670` or `cs3690` to match your course, and paste the key exactly as your
+instructor provided it. If you are enrolled in more than one of these courses, install each
+key with its own `--key` line. Re-run the command at any time to replace a key.
+
+### 4.3 Start a lab
 
 ```bash
 ./donlab cs3670-lab1
@@ -240,10 +257,12 @@ What happens, in order (each step prints a `==>` line):
    its checksum, keeps your local key and channel, and replaces itself if the published copy
    is newer. Failures (offline, bad checksum, read-only file) are ignored and the copy on
    disk is used.
-2. **Lab bundle.** It compares the published `imodule.tar.enc.sha256` with the version
-   installed on the VM. If they differ it downloads the bundle, verifies the checksum,
-   decrypts it and installs it with the framework's `imodule` command. Otherwise it prints
-   `Lab bundle is already up to date`.
+2. **Lab bundle.** Using your installed course key, it compares the published
+   `imodule-<course>.tar.enc.sha256` with the version on the VM. If they differ it downloads
+   your course's bundle, verifies the checksum, decrypts it and installs it with the
+   framework's `imodule` command. Otherwise it prints `Lab bundle is already up to date`. If
+   you have not installed the course key yet, it stops and tells you to run
+   `donlab --key <course>:<key>`.
 3. **Images.** It checks the container registry for updated images for this lab and
    downloads any that changed. On Apple Silicon it installs the lab's arm64 images; a lab
    with no arm64 build is refused up front.
@@ -268,7 +287,7 @@ The first start, showing the bundle download and installation followed by the im
 shown in the second image has been replaced with the appliance path
 (`/home/student/labtainer/trunk/labs/<lab>/docs/<lab>.html`).*
 
-### 4.3 The manual
+### 4.4 The manual
 
 Firefox opens the manual for the lab. The sidebar tracks your progress; **Bearings** holds
 the scenario's credentials and hosts; **Actions** runs Check Work, Stop Lab and Reset Lab
@@ -279,7 +298,7 @@ the PDF you submit.
 
 ![The Actions menu of the manual: Check Work, Stop Lab, Reset Lab](docs/img/manual-actions-menu.png)
 
-### 4.4 The tmux layout
+### 4.5 The tmux layout
 
 The launcher lays the lab out in one tmux session, one window per host, named after the
 host. The status line at the bottom lists the windows:
@@ -289,7 +308,7 @@ host. The status line at the bottom lists the windows:
 The tmux keys and the i3 desktop are covered in the FAQ at the bottom of every lab manual.
 Prefer the framework's separate pop-up terminal windows? Run `./donlab <lab> --no-tmux`.
 
-### 4.5 Stop the lab and submit
+### 4.6 Stop the lab and submit
 
 Stop the lab from the workspace directory, or with **Actions > Stop Lab** in the manual:
 
@@ -309,10 +328,11 @@ instructor by the route given in your course instructions.
 `checkwork <lab>` shows how the graded goals are scoring while the lab runs. To discard your
 work and start the lab from scratch: `./donlab <lab> -r`.
 
-### 4.6 Other launcher commands
+### 4.7 Other launcher commands
 
 | Command | Effect |
 |---|---|
+| `./donlab --key <course>:<key>` | Install your key for a course (`cs3600`, `cs3670` or `cs3690`); needed once before that course's labs will unlock. |
 | `./donlab --doctor` | Readiness check: Docker daemon, X display, clipboard, registry reachability, free disk, vim and tmux. |
 | `./donlab -v` | Print the launcher version, channel and build id. |
 | `./donlab -u` | Force a self-update check now and report the outcome. |
@@ -339,8 +359,10 @@ VM. The first start of a lab does need network access to pull its images. On UTM
 shows `Network is unreachable` after the Mac slept needs a shutdown and restart; keep the
 network mode at Emulated VLAN.
 
-**The launcher says `WARN: decrypt failed; using installed version`. Why?**
-You are running the keyless copy from this repository. Use the `donlab` posted on the LMS.
+**The launcher says I need my course key, or prints `WARN: decrypt failed`. Why?**
+You have not installed the key for that course yet, or you installed the wrong one. Your
+instructor provides one key per course; install it once with `donlab --key <course>:<key>`,
+for example `donlab --key cs3670:...`, then run the lab again.
 
 **The VM rebooted during the first run. Is something wrong?**
 No. A fresh appliance reboots once after the launcher switches the login session to i3,
