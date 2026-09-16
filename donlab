@@ -40,14 +40,17 @@ CHANNEL='prod'   # DONLAB-CHANNEL
 CHANNEL="${DONLAB_CHANNEL:-$CHANNEL}"
 [ "$CHANNEL" = "dev" ] && DON_BRANCH=dev || DON_BRANCH=main
 DON_REPO=spencer-dollahite/imodule
-IMODULE_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule.tar.enc
+# The lab bundle is per COURSE: imodule-cs3600 / -cs3670 / -cs3690.tar.enc, each encrypted under
+# that course's own key. IMODULE_URL is set once the lab (hence the course) is known, below.
+# donlab itself is a single file, published keyless at DONLAB_URL.
 DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.19'
+DONLAB_VERSION='1.4.0'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
+  echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
   echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"
   echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"
   echo "       donlab --reset <labname>      # discard this lab's containers and start it fresh"
@@ -65,7 +68,35 @@ for _a in "$@"; do case "$_a" in
     echo "donlab $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null)) build $(sha256sum "${BASH_SOURCE[0]}" 2>/dev/null | cut -c1-12)"
     exit 0 ;;
 esac; done
-KEYB64=''   # DONLAB-KEY
+# Per-course keys: base64 of each course's imodule passphrase. EMPTY on the published/keyless
+# copy; a student installs theirs once with `donlab --key <course>:<key>` (handled just below).
+# The self-update graft preserves whichever of these are set, so keys survive donlab updates.
+KEY_cs3600=''   # DONLAB-KEY-cs3600
+KEY_cs3670=''   # DONLAB-KEY-cs3670
+KEY_cs3690=''   # DONLAB-KEY-cs3690
+
+# ---- install / replace a per-course key: donlab --key <course>:<key> ----------------------
+# Grafts the key into THIS file (base64) and exits, the same in-place rewrite the self-update
+# uses. The key never leaves the machine. Run once per course you are enrolled in.
+if [ "${1:-}" = "--key" ]; then
+  _spec="${2:-}"; _course="${_spec%%:*}"; _keyval="${_spec#*:}"
+  case "$_course" in cs3600|cs3670|cs3690) ;; *)
+    echo "donlab --key: course must be cs3600, cs3670, or cs3690 -- e.g. donlab --key cs3670:<key>"; exit 2 ;;
+  esac
+  { [ -n "$_keyval" ] && [ "$_keyval" != "$_spec" ]; } || { echo "donlab --key: missing key -- form: donlab --key $_course:<key>"; exit 2; }
+  _self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
+  [ -w "$_self" ] || { echo "donlab --key: $_self is not writable (copy donlab into your home dir, or re-run with sudo)."; exit 1; }
+  _kb64="$(printf '%s' "$_keyval" | base64 -w0)"
+  _tmp="$_self.tmp.$$"
+  awk -v c="$_course" -v k="$_kb64" \
+    '$0 ~ ("# DONLAB-KEY-" c "$") { print "KEY_" c "='\''" k "'\''   # DONLAB-KEY-" c; next } { print }' \
+    "$_self" > "$_tmp" 2>/dev/null
+  if [ -s "$_tmp" ] && grep -qF "KEY_$_course='$_kb64'" "$_tmp" && grep -q '^# DONLAB-END$' "$_tmp"; then
+    chmod +x "$_tmp" 2>/dev/null && mv -f "$_tmp" "$_self" \
+      && { echo "Installed your $_course key. You can now run, e.g.:  donlab $_course-lab1"; exit 0; }
+  fi
+  rm -f "$_tmp" 2>/dev/null; echo "donlab --key: could not store the key (is $_self writable?)."; exit 1
+fi
 # dev channel -> pull the rapid :dev images (our framework honors DON_IMAGE_TAG and retags to
 # :latest locally). prod leaves it unset -> :latest (the promoted, tested images).
 [ "$CHANNEL" = "dev" ] && export DON_IMAGE_TAG=dev
@@ -619,11 +650,18 @@ self_update() {
     # adopt only a complete, authentic, well-formed donlab
     if [ -n "$want" ] && [ "$want" = "$got" ] \
        && head -1 "$dir/new" | grep -q '^#!/bin/bash' \
-       && grep -q '# DONLAB-KEY$' "$dir/new" \
+       && grep -q '# DONLAB-KEY-cs3670$' "$dir/new" \
        && grep -q '^# DONLAB-END$' "$dir/new"; then
-      # graft our in-memory local key AND local channel onto the freshly fetched logic, so both
-      # persist across self-updates (the published donlab ships keyless + CHANNEL='prod').
-      awk -v k="$KEYB64" '/# DONLAB-KEY$/{print "KEYB64='\''" k "'\''   # DONLAB-KEY"; next} {print}' "$dir/new" > "$dir/m1" 2>/dev/null
+      # graft our in-memory per-course keys AND local channel onto the freshly fetched logic, so
+      # both persist across self-updates (the published donlab ships keyless + CHANNEL='prod').
+      local _c _kv
+      cp "$dir/new" "$dir/m1" 2>/dev/null
+      for _c in cs3600 cs3670 cs3690; do
+        eval "_kv=\${KEY_$_c}"
+        awk -v c="$_c" -v k="$_kv" \
+          '$0 ~ ("# DONLAB-KEY-" c "$") {print "KEY_" c "='\''" k "'\''   # DONLAB-KEY-" c; next} {print}' \
+          "$dir/m1" > "$dir/m2" 2>/dev/null && mv -f "$dir/m2" "$dir/m1"
+      done
       awk -v c="$CHANNEL" '/# DONLAB-CHANNEL$/{print "CHANNEL='\''" c "'\''   # DONLAB-CHANNEL"; next} {print}' "$dir/m1" > "$dir/merged" 2>/dev/null
       if [ -s "$dir/merged" ] && grep -q '^# DONLAB-END$' "$dir/merged" && ! cmp -s "$dir/merged" "$self"; then
         # atomic replace (temp in the same dir as self, then rename)
@@ -685,6 +723,21 @@ done
 if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { usage; exit 1; }
   LAB="${PASS[0]}"
+  # The course is the lab-id prefix (cs3670-lab4 -> cs3670). It selects the per-course bundle and
+  # the per-course key the student installed with `donlab --key <course>:<key>`.
+  COURSE="${LAB%%-*}"
+  case "$COURSE" in cs3600|cs3670|cs3690) ;; *)
+    echo "donlab: '$LAB' is not a recognized lab id (expected cs3600-*, cs3670-*, or cs3690-*)."; exit 1 ;;
+  esac
+  IMODULE_URL="https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule-$COURSE.tar.enc"
+  eval "COURSE_KEY=\${KEY_$COURSE}"
+  if [ -z "$COURSE_KEY" ]; then
+    echo "donlab: you don't have the $COURSE key yet, so its labs can't be unlocked."
+    echo "        Get your $COURSE key from your instructor, then run:"
+    echo "            donlab --key $COURSE:<key>"
+    echo "        and re-run:  donlab $LAB"
+    exit 1
+  fi
 fi
 
 # ---- preflight: the things every lab needs ----
@@ -912,19 +965,19 @@ CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || 
 ensure_i3_session   # opinionated: lab work happens in i3 (installs, sets the login session, reboots once)
 step "Checking for the latest lab bundle..."
 remote_sha="$(curl -fsSL "$IMODULE_URL.sha256" 2>/dev/null | tr -d '[:space:]' || true)"
-local_sha="$(cat "$CFG/installed.sha256" 2>/dev/null || true)"
+local_sha="$(cat "$CFG/installed-$COURSE.sha256" 2>/dev/null || true)"
 if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
   step "Downloading the lab bundle (this can take a minute)..."
   if { if _is_tty; then curl -fL --progress-bar "$IMODULE_URL" -o "$TMP/e"; else curl -fsSL "$IMODULE_URL" -o "$TMP/e"; fi; }; then
     if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
-      printf '%s' "$KEYB64" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
+      printf '%s' "$COURSE_KEY" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
       if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
         IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
         # Older appliance releases of imodule open ~/.local/share/labtainers/imodules.txt for
         # append WITHOUT creating the directory (FileNotFoundError on a fresh box). Pre-create it.
         mkdir -p "$HOME/.local/share/labtainers" 2>/dev/null || true
         if [ -x "$IMOD" ] && run_step "Installing labs" "$IMOD" "file://$TMP/imodule.tar"; then
-          [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed.sha256"
+          [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed-$COURSE.sha256"
           step "Lab bundle installed."
         else echo "WARN: imodule install failed; using installed version."; fi
       else echo "WARN: decrypt failed; using installed version."; fi
