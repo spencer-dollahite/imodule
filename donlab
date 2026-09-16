@@ -25,6 +25,9 @@
 #   (env) DONLAB_NO_PULL=1   do not check the registry for updated lab images before starting.
 #   ARM hosts (Apple Silicon run natively): donlab pulls the lab's :arm64 images and installs
 #   them under the plain image name; a lab with no ARM build published is refused up front.
+#   Screenshots: donlab installs flameshot on the host (the go-to screenshot tool: select a region,
+#   annotate, save). Under i3, Print or Super+p opens it; files land in ~/labtainer_xfer/screenshots/
+#   ready for the manual's "Attach screenshot(s)" control. The in-container `shot` remains a fallback.
 #   -v, --version   print the donlab version (and build sha) and exit.
 #   -u, --update    force-update donlab itself (cache-busted) and exit.
 #   Set DONLAB_NOSELFUPDATE=1 to skip the self-update for one run.
@@ -42,7 +45,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.3.18'
+DONLAB_VERSION='1.3.19'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"
@@ -179,13 +182,14 @@ ensure_cgroup2() {
   exit 0
 }
 
-# ---- make sure the lab helpers (tmux + vim) are present ----------------------------------
+# ---- make sure the lab helpers (tmux + vim + flameshot) are present -----------------------
 # tmux: without it the framework opens a pop-up terminal per container; tmux keeps every host in
 # one window. (The appliance's "black full-screen console" was NOT a pop-up: it was the Kali
 # container's agetty on the host's VT -- fixed in the don.kali base, 2026-09-10.)
 # vim: the editor the manuals assume -- the appliance ships vi (vim-tiny) only, so install vim
 # proper. Install whatever is missing in one apt transaction; non-fatal (tmux missing -> pop-ups,
-# vim missing -> vi). Honors --no-tmux for tmux; vim is installed regardless.
+# vim missing -> vi, flameshot missing -> the in-container `shot`). Honors --no-tmux for tmux; vim
+# is installed regardless.
 ensure_tools() {
   local want=() p SUDO=""
   command -v tmux >/dev/null 2>&1 || { [ "${USE_TMUX:-1}" = 1 ] && want+=(tmux); }
@@ -193,6 +197,9 @@ ensure_tools() {
   command -v xclip >/dev/null 2>&1 || want+=(xclip)   # bridge tmux selection -> X clipboard
   command -v spice-vdagent >/dev/null 2>&1 || want+=(spice-vdagent)  # UTM/Mac host <-> guest clipboard
   command -v clipmenud >/dev/null 2>&1 || want+=(clipmenu)            # keep clipboard after the source app closes
+  # flameshot: the go-to screenshot tool for lab reports (region select + arrows/highlight/blur,
+  # saves straight to ~/labtainer_xfer/screenshots). Only worth installing where there is a display.
+  if [ -n "${DISPLAY:-}" ]; then command -v flameshot >/dev/null 2>&1 || want+=(flameshot); fi
   # picom: a compositor so gnome-terminal transparency renders under i3 (XFCE has its own).
   if [ "${XDG_CURRENT_DESKTOP:-}" = i3 ] || pgrep -x i3 >/dev/null 2>&1; then
     command -v picom >/dev/null 2>&1 || want+=(picom)
@@ -206,7 +213,7 @@ ensure_tools() {
   $SUDO apt-get update -qq || true
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y ${want[*]} \
     || echo "donlab: couldn't install ${want[*]} automatically. Run once: sudo apt-get update && sudo apt-get install -y ${want[*]}"
-  for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi)."; done
+  for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi, flameshot -> shot in the container)."; done
 }
 
 # ---- which desktop are we in? (i3 first-class, then XFCE, GNOME, other) -----------------------
@@ -232,7 +239,7 @@ detect_desktop() {
 # that (a greeter that ignores the setting), donlab says so and carries on in the current desktop.
 # Opt out: --no-i3 or DONLAB_NO_I3=1. Undo: Super+Shift+e, pick another session at the login
 # screen; sudo rm /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf to make that permanent.
-I3_CFG_STAMP="# managed by donlab (i3 config v2)"
+I3_CFG_STAMP="# managed by donlab (i3 config v3)"
 i3_config_text() {   # the appliance's /etc/i3/config, with donlab's startup hook; $1 = startup script
   cat <<I3
 $I3_CFG_STAMP -- delete this line to keep your own edits (donlab then leaves the file alone)
@@ -259,6 +266,9 @@ exec --no-startup-id $1
 # --- launchers ---
 bindsym \$mod+Return exec $1 --terminal
 bindsym \$mod+w exec firefox
+# screenshots for the lab report: select a region, annotate, click save -> ~/labtainer_xfer/screenshots/
+bindsym Print exec sh -c 'mkdir -p "\$HOME/labtainer_xfer/screenshots" && flameshot gui -p "\$HOME/labtainer_xfer/screenshots"'
+bindsym \$mod+p exec sh -c 'mkdir -p "\$HOME/labtainer_xfer/screenshots" && flameshot gui -p "\$HOME/labtainer_xfer/screenshots"'
 bindsym \$mod+d exec dmenu_run
 bindsym \$mod+Shift+q kill
 
@@ -352,6 +362,7 @@ cat <<'TXT'
 
     Super+Enter    new terminal            Super+w         Firefox (the lab manual)
     Super+d        run a program by name   Super+f         fullscreen on / off
+    Print / Super+p  screenshot (flameshot: select, annotate, save -> ~/labtainer_xfer/screenshots)
     Super+Arrows   move focus              Super+Shift+q   close the focused window
     Super+1 .. 4   switch workspace        Super+Shift+1..4  send window to workspace
     Super+r        resize mode (arrows, Esc)   drag a border with the mouse also resizes
@@ -810,6 +821,7 @@ run_doctor() {
   # Editor + terminal multiplexer the labs assume
   command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found (labs assume vim; vi will be used)"
   command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found (labs fall back to pop-up terminals)"
+  command -v flameshot >/dev/null 2>&1 && P "flameshot present (screenshots: Print / Super+p under i3)" || W "flameshot not found (screenshots fall back to the in-container shot tool)"
   # ARM host: images must be arm64
   if [ "$HOST_ARCH" = arm64 ]; then P "Apple-Silicon host: donlab installs :arm64 images per lab"; fi
   echo
