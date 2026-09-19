@@ -1189,6 +1189,7 @@ start_bridge() {   # start (or restart, pointed at THIS lab) the manual bridge; 
 }
 # ---- open the lab manual (prefer the bridge -> live buttons; fall back to file://) ----
 open_manual() {
+  [ -n "${DONLAB_NO_MANUAL:-}" ] && return 0   # CI/headless: never launch the host manual browser
   [ -n "${DISPLAY:-}" ] || return 0
   local url b m="$LTDIR/labs/$LAB/docs/$LAB.html"
   if start_bridge; then
