@@ -47,7 +47,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.0'
+DONLAB_VERSION='1.4.1'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -1016,6 +1016,22 @@ prune_stale() {
     tmpconts="$(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$tmpsc" | sort)"
     realconts="$(printf '%s\n' "$conts" | sort)"
     [ "$tmpconts" = "$realconts" ] || rm -rf "$lsdir/.tmp/$LAB"
+  fi
+  # A lab update that KEEPS the container set leaves that cache stale too (a new ADD-HOST service
+  # name, a changed address, a new parameter): the framework never re-copies it, and start.py
+  # quietly builds the containers from the old copy. Seen 2026-09-23 on the VPS: cs3670-lab11's
+  # logistics.fcdpac.navy.mil hosts entry was missing because .tmp/cs3670-lab11/start.config
+  # predated the service names. Stamp the cache with the sha256 of the installed start.config
+  # and drop the cache whenever the stamp no longer matches (a fresh copy is re-parameterized
+  # from the same seed, so nothing else changes).
+  local cur stamp
+  if [ -n "$lsdir" ]; then
+    cur="$(sha256sum "$sc" 2>/dev/null | cut -c1-64)"
+    stamp="$lsdir/.tmp/$LAB/.don-start-config.sha256"
+    if [ -d "$lsdir/.tmp/$LAB" ] && [ "$(cat "$stamp" 2>/dev/null)" != "$cur" ]; then
+      rm -rf "$lsdir/.tmp/$LAB"
+    fi
+    mkdir -p "$lsdir/.tmp/$LAB" 2>/dev/null && printf '%s\n' "$cur" > "$stamp" 2>/dev/null || true
   fi
 }
 prune_stale
