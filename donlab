@@ -20,7 +20,11 @@
 #   cdlab       shell helper donlab adds to ~/.bashrc: cd to the Labtainers student directory.
 #   (env) DONLAB_NO_LAYOUT=1   under i3, do not arrange terminal / manual / container GUI windows.
 #   (env) DONLAB_NO_DARK=1   do not switch the GNOME desktop to dark mode on first launch.
-#   (env) DONLAB_NO_NATURAL_SCROLL=1   do not flip scrolling to natural (reversed) on first launch.
+#   --scroll=natural|traditional|auto   set the mouse-wheel direction donlab keeps applied in every X
+#               session (i3, XFCE, GNOME, plain X): traditional = wheel toward you moves the page down;
+#               natural = content follows the wheel; auto (default) = per pointer, so a Mac host feels
+#               traditional in the guest under both UTM and VirtualBox. The desktop's own setting wins
+#               once the student changes it there. (env) DONLAB_NO_NATURAL_SCROLL=1 = leave it alone.
 #   (env) DONLAB_NO_WALLPAPER=1   do not set the NPS-logo-on-black desktop wallpaper on first launch.
 #   (env) DONLAB_NO_PULL=1   do not check the registry for updated lab images before starting.
 #   ARM hosts (Apple Silicon run natively): donlab pulls the lab's :arm64 images and installs
@@ -47,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.1'
+DONLAB_VERSION='1.4.2'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -60,6 +64,7 @@ usage() {
   echo "       donlab -v|--version           # print the donlab version"
   echo "       donlab -h|--help              # this text"
   echo "options: --no-tmux (classic pop-up terminals)  --no-i3 (keep your desktop)"
+  echo "         --scroll=natural|traditional|auto (wheel direction donlab keeps applied; auto = per pointer)"
   echo "env:     DONLAB_NO_PULL=1 (skip the registry check)  DONLAB_NOSELFUPDATE=1 (skip the self-update)"
 }
 for _a in "$@"; do case "$_a" in
@@ -270,7 +275,7 @@ detect_desktop() {
 # that (a greeter that ignores the setting), donlab says so and carries on in the current desktop.
 # Opt out: --no-i3 or DONLAB_NO_I3=1. Undo: Super+Shift+e, pick another session at the login
 # screen; sudo rm /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf to make that permanent.
-I3_CFG_STAMP="# managed by donlab (i3 config v3)"
+I3_CFG_STAMP="# managed by donlab (i3 config v4)"
 i3_config_text() {   # the appliance's /etc/i3/config, with donlab's startup hook; $1 = startup script
   cat <<I3
 $I3_CFG_STAMP -- delete this line to keep your own edits (donlab then leaves the file alone)
@@ -293,6 +298,8 @@ exec --no-startup-id sh -c 'for f in $CFG/nps-logo.png /usr/share/backgrounds/do
 exec --no-startup-id sh -c 'M=\$(xrandr | awk "/ connected/{print \\\$1; exit}"); [ -n "\$M" ] && xrandr --output "\$M" --mode 1920x1080 2>/dev/null || true'
 # first terminal (shows the one-time quick start after donlab switched you to i3)
 exec --no-startup-id $1
+# scroll direction (donlab --scroll=...): re-applied at every i3 start/reload, i3 runs no XDG autostart
+exec_always --no-startup-id $CFG/scroll-apply.sh
 
 # --- launchers ---
 bindsym \$mod+Return exec $1 --terminal
@@ -516,23 +523,92 @@ ensure_dark_theme() {
   touch "$marker" 2>/dev/null || true
 }
 
-# ---- natural ("reversed") scrolling (GNOME) -------------------------------------------------
-# Same one-shot pattern as the dark desktop: on first launch flip the mouse and touchpad to
-# natural scrolling (content follows the fingers / wheel, as on a Mac), then never touch it
-# again, so a student who sets it back keeps their choice. Opt out with DONLAB_NO_NATURAL_SCROLL=1.
-# Undo by hand:  gsettings set org.gnome.desktop.peripherals.mouse natural-scroll false
-ensure_natural_scroll() {
-  local marker="$CFG/.natural-scroll-set" d s changed=0
-  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_NATURAL_SCROLL:-}" ] || return 0
+# ---- scroll direction (any desktop, any hypervisor) -------------------------------------------
+# One donlab-owned setting, $CFG/scroll.conf (MODE=auto|natural|traditional, default auto):
+#   traditional  wheel toward you -> the page moves down (the classic direction)
+#   natural      content follows the wheel / fingers (Mac trackpad style)
+#   auto         per pointer: VirtualBox pointers -> traditional, every other pointer (QEMU/UTM
+#                tablet, real mice, VMware) -> natural. On a Mac host that is what makes BOTH
+#                UTM and VirtualBox feel "wheel toward you -> page down" in the guest: UTM passes
+#                the host's (already natural) wheel through and the guest flips it once more;
+#                VirtualBox hands the guest un-flipped deltas, so flipping there inverts it.
+# It is applied through $CFG/scroll-apply.sh (xinput on libinput's per-device property, which
+# works in i3, XFCE, GNOME-on-X11 or a bare X session): at every donlab launch, at every i3
+# start/reload (exec_always in the managed i3 config) and at every XDG-autostart login. The
+# desktop's own persistent setting wins the moment the student sets one: an XFCE per-device
+# ReverseScrolling entry, or GNOME's natural-scroll keys (set once by donlab on first launch,
+# never touched again). Change it: donlab --scroll=natural|traditional|auto (or edit scroll.conf).
+# DONLAB_NO_NATURAL_SCROLL=1 (legacy) makes donlab leave scrolling entirely alone.
+write_scroll_apply() {   # $CFG/scroll-apply.sh: self-contained, safe to run from any X session hook
+  local f="$CFG/scroll-apply.sh"
+  cat > "$f" <<EOS
+#!/bin/bash
+# donlab: apply the scroll-direction setting (\$CFG/scroll.conf) to every pointer libinput drives.
+# Idempotent; exits quietly without a display, without xinput, or when the student opted out.
+CFG="$CFG"; MODE=auto
+[ -f "\$CFG/scroll.conf" ] && . "\$CFG/scroll.conf"
+[ -z "\${DONLAB_NO_NATURAL_SCROLL:-}" ] || exit 0
+[ -n "\${DISPLAY:-}" ] && command -v xinput >/dev/null 2>&1 || exit 0
+case "\$MODE" in natural|traditional|auto) ;; *) MODE=auto ;; esac
+PROP="libinput Natural Scrolling Enabled"
+# XFCE: a per-device ReverseScrolling entry means the student chose in Settings > Mouse; respect it.
+xf=""; command -v xfconf-query >/dev/null 2>&1 && xf="\$(xfconf-query -c pointers -l 2>/dev/null | grep -E '/ReverseScrolling\$' || true)"
+for id in \$(xinput list --id-only 2>/dev/null); do
+  props="\$(xinput list-props "\$id" 2>/dev/null)" || continue
+  printf '%s\n' "\$props" | grep -q "^[[:space:]]*\$PROP (" || continue     # not a libinput pointer with a wheel
+  name="\$(printf '%s\n' "\$props" | head -1 | sed -E "s/^Device '(.*)':\$/\\\\1/")"
+  case "\$MODE" in
+    natural)     v=1 ;;
+    traditional) v=0 ;;
+    *)           case "\$name" in *VirtualBox*) v=0 ;; *) v=1 ;; esac ;;
+  esac
+  key="\$(printf '%s' "\$name" | tr ' ' '_')"
+  case "\$xf" in *"/\$key/ReverseScrolling"*) continue ;; esac
+  cur="\$(printf '%s\n' "\$props" | sed -nE "s/^[[:space:]]*\$PROP \([0-9]+\):[[:space:]]*([01]).*/\\\\1/p")"
+  [ "\$cur" = "\$v" ] || xinput set-prop "\$id" "\$PROP" "\$v" 2>/dev/null
+done
+exit 0
+EOS
+  chmod +x "$f"
+}
+scroll_hook_autostart() {   # XDG autostart (XFCE/GNOME/LXDE...; i3 uses exec_always instead)
+  local d="$HOME/.config/autostart" f="$HOME/.config/autostart/donlab-scroll.desktop"
+  mkdir -p "$d"
+  printf '[Desktop Entry]\nType=Application\nName=DoN Range scroll direction\nComment=donlab: keep the mouse-wheel direction from ~/.config/don-range/scroll.conf applied\nExec=%s/scroll-apply.sh\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n' "$CFG" > "$f" 2>/dev/null || true
+}
+scroll_set_mode() {   # donlab --scroll=<mode>: record it, apply now, exit non-zero on a bad value
+  case "$1" in natural|traditional|auto) ;; *)
+    echo "donlab: --scroll takes natural, traditional or auto (got '$1')."; return 1 ;;
+  esac
+  printf 'MODE=%s\n' "$1" > "$CFG/scroll.conf"
+  write_scroll_apply; scroll_hook_autostart
+  "$CFG/scroll-apply.sh"
+  echo "donlab: scroll direction set to '$1' (kept in $CFG/scroll.conf; applied in every X session)."
+}
+ensure_scroll_direction() {
+  [ -z "${DONLAB_NO_NATURAL_SCROLL:-}" ] || return 0
+  [ -f "$CFG/scroll.conf" ] || printf 'MODE=auto\n' > "$CFG/scroll.conf"
+  write_scroll_apply; scroll_hook_autostart
+  [ -n "${DISPLAY:-}" ] || return 0
+  "$CFG/scroll-apply.sh"
+  # GNOME (X11 or Wayland) keeps its own persistent switch and re-applies it over xinput: set it
+  # ONCE to the same intent, then never again, so a student who changes it in Settings keeps that.
+  local marker="$CFG/.natural-scroll-set" d s v=true mode
   [ -f "$marker" ] && return 0
   command -v gsettings >/dev/null 2>&1 || return 0
   case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*|*ubuntu*) ;; *) return 0 ;; esac
+  mode="$(sed -nE 's/^MODE=(.*)$/\1/p' "$CFG/scroll.conf" 2>/dev/null)"
+  case "$mode" in
+    traditional) v=false ;;
+    natural)     v=true ;;
+    *) command -v xinput >/dev/null 2>&1 && xinput list --name-only 2>/dev/null | grep -q VirtualBox && v=false ;;
+  esac
   for d in mouse touchpad; do
     s="org.gnome.desktop.peripherals.$d"
-    [ "$(gsettings get "$s" natural-scroll 2>/dev/null)" = true ] && continue
-    gsettings set "$s" natural-scroll true 2>/dev/null && changed=1
+    [ "$(gsettings get "$s" natural-scroll 2>/dev/null)" = "$v" ] && continue
+    gsettings set "$s" natural-scroll "$v" 2>/dev/null || true
   done
-  [ "$changed" = 1 ] && echo "donlab: set natural (reversed) scrolling (once; undo with: gsettings set org.gnome.desktop.peripherals.mouse natural-scroll false)."
+  echo "donlab: GNOME scrolling set once (natural-scroll=$v; change it in Settings > Mouse & Touchpad, donlab will not touch it again)."
   touch "$marker" 2>/dev/null || true
 }
 
@@ -712,6 +788,7 @@ for a in "$@"; do
   case "$a" in
     --no-tmux|--gui) USE_TMUX=0 ;;
     --no-i3)         NO_I3=1 ;;
+    --scroll=*)      SCROLL_SET="${a#--scroll=}" ;;
     --reset)         RESET_LAB=1 ;;
     --doctor|--check)   DOCTOR=1 ;;
     --clean)         CLEAN=1 ;;
@@ -720,6 +797,11 @@ for a in "$@"; do
     *)               PASS+=("$a") ;;
   esac
 done
+if [ -n "${SCROLL_SET:-}" ]; then
+  CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
+  scroll_set_mode "$SCROLL_SET" || exit 1
+  [ ${#PASS[@]} -ge 1 ] || exit 0
+fi
 if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { usage; exit 1; }
   LAB="${PASS[0]}"
@@ -1484,7 +1566,7 @@ ensure_terminal_ergonomics() {
 ensure_tools
 ensure_cdlab
 ensure_dark_theme
-ensure_natural_scroll
+ensure_scroll_direction
 ensure_wallpaper
 ensure_xhost
 ensure_clipboard
