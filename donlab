@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.5'
+DONLAB_VERSION='1.4.6'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -1341,8 +1341,15 @@ open_manual() {
     url="http://127.0.0.1:$BRIDGE_PORT/$LAB.html"
     echo "donlab: manual + live Check Work / Stop Lab at $url"
     if start_frms; then
-      frms="$(frms_url)"
-      echo "donlab: FRMS (budget, marketplace, personnel) at $frms"
+      if [ -d "$LTDIR/labs/$LAB/docs/frms-inlab" ]; then
+        # FRMS lives INSIDE this lab (hi-web01, https://frms.fcdpac.navy.mil): students reach it from a lab
+        # workstation's own Firefox. The host server keeps running only to deploy the in-lab bundle and sync
+        # state for grading, so no FRMS tab opens beside the manual.
+        echo "donlab: FRMS runs inside the lab -- open https://frms.fcdpac.navy.mil from a lab workstation"
+      else
+        frms="$(frms_url)"
+        echo "donlab: FRMS (budget, marketplace, personnel) at $frms"
+      fi
     fi
   else
     [ -f "$m" ] || return 0
