@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.4'
+DONLAB_VERSION='1.4.5'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -276,7 +276,7 @@ detect_desktop() {
 # that (a greeter that ignores the setting), donlab says so and carries on in the current desktop.
 # Opt out: --no-i3 or DONLAB_NO_I3=1. Undo: Super+Shift+e, pick another session at the login
 # screen; sudo rm /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf to make that permanent.
-I3_CFG_STAMP="# managed by donlab (i3 config v5)"
+I3_CFG_STAMP="# managed by donlab (i3 config v6)"
 i3_config_text() {   # the appliance's /etc/i3/config, with donlab's startup hook; $1 = startup script
   cat <<I3
 $I3_CFG_STAMP -- delete this line to keep your own edits (donlab then leaves the file alone)
@@ -286,11 +286,11 @@ font pango:DejaVu Sans Mono 10
 
 # --- lab layout (donlab arranges it when a lab starts): terminal = left half, full height;
 #     manual = top right; GUI apps launched from a container (Firefox, Wireshark) = bottom right ---
-for_window [class="lab-firefox"] move window to mark manual
-# each lab browser is titled by WHO sits at that seat and WHERE ("CDR D. Holloway, CISO / ISSM @ hi-issm01"): the
-# container's Firefox wrapper names its window instance after the seat (generator seat label), so several users'
-# browsers in one lab are told apart at a glance, before the page content
-for_window [class="lab-firefox"] title_format "<b>%instance</b>  —  %title"
+# lab browsers (a container Firefox): donlab sets each one's X class to user@host at lab start (ensure_container_x;
+# Firefox keeps "Navigator" as the instance of every browser window, so the class is the only name it honours)
+for_window [class="^[^@ ]+@[^@ ]+$"] move window to mark manual
+# ... and its title is just that: user@host ("dcho@hi-ws-it"), so several users' browsers in one lab are told apart
+for_window [class="^[^@ ]+@[^@ ]+$"] title_format "%class"
 for_window [class="(?i)^wireshark$"] move window to mark manual
 
 # --- policy parity with the desktop sessions (i3 does not run XDG autostart) ---
@@ -1580,6 +1580,10 @@ ensure_container_x() {
     cname="$LAB.$c.student"
     [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = true ] || continue
     docker exec "$cname" sh -c "mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && ln -sfn /var/tmp/.X11-unix/X$n /tmp/.X11-unix/X$n; grep -qs '^DISPLAY=' /etc/environment || echo 'DISPLAY=:$n' >> /etc/environment" >/dev/null 2>&1 || true
+    # each lab browser's i3 title is user@host ("dcho@hi-ws-it"): set its X class to that. The image's wrapper passes
+    # --class lab-firefox --name <seat>, but Firefox names every browser window's instance "Navigator" and honours only
+    # the class, so rewrite that one argument in place (idempotent; no image rebuild; Firefox remoting still works).
+    docker exec -u root "$cname" sh -c 'f=/usr/local/bin/firefox; [ -f "$f" ] && grep -q -- "--class lab-firefox --name" "$f" && sed -i "s|--class lab-firefox --name \"[^\"]*\"|--class \"\$(id -un)@\$(hostname)\"|" "$f"' >/dev/null 2>&1 || true
   done
 }
 
