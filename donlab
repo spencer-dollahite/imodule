@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.6'
+DONLAB_VERSION='1.4.8'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -955,13 +955,34 @@ run_doctor() {
   if [ -n "$free_kb" ]; then
     local free_gb=$((free_kb/1024/1024))
     if [ "$free_gb" -ge 15 ]; then P "disk: ${free_gb} GB free for images"
-    elif [ "$free_gb" -ge 6 ]; then W "disk: only ${free_gb} GB free -- a large lab may run tight"
-    else F "disk: only ${free_gb} GB free -- image pulls/builds will likely fail"; fi
+    elif [ "$free_gb" -ge 6 ]; then W "disk: only ${free_gb} GB free -- a large lab may run tight (free space: donlab --clean)"
+    else F "disk: only ${free_gb} GB free -- image pulls/builds will likely fail (free space: donlab --clean)"; fi
+  fi
+  # RAM: the heavier labs run many containers at once (the GNS3 enterprise, Wazuh/Fleet), so low memory
+  # swaps or gets OOM-killed. Round to the nearest GB (MemTotal is a little under the physical amount, so an
+  # 8 GB box reads ~7.7 -- rounding keeps it from a false warning). WARN, not FAIL: it degrades, rarely
+  # hard-breaks, and the doctor reserves FAIL for what stops a lab outright (no docker, no X).
+  local mem_kb mem_gb
+  mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+  if [ -n "$mem_kb" ]; then
+    mem_gb=$(( (mem_kb + 524288) / 1048576 ))
+    if [ "$mem_gb" -ge 8 ]; then P "RAM: ${mem_gb} GB"
+    elif [ "$mem_gb" -ge 4 ]; then W "RAM: only ${mem_gb} GB -- the heaviest labs (multi-container / GNS3) may swap; close other apps"
+    else W "RAM: only ${mem_gb} GB -- heavy labs will likely swap or be OOM-killed; give this VM more memory"; fi
+  fi
+  # CPU cores: fewer cores means slow image builds and sluggish multi-container labs.
+  local cores; cores=$(nproc 2>/dev/null || awk '/^processor/{n++} END{print n}' /proc/cpuinfo 2>/dev/null)
+  if [ -n "$cores" ]; then
+    if [ "$cores" -ge 4 ]; then P "CPU: ${cores} cores"
+    elif [ "$cores" -ge 2 ]; then W "CPU: only ${cores} cores -- image builds and multi-container labs will be slow"
+    else W "CPU: only ${cores} core -- labs will be slow; give this VM more cores"; fi
   fi
   # Editor + terminal multiplexer the labs assume
-  command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found (labs assume vim; vi will be used)"
-  command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found (labs fall back to pop-up terminals)"
-  command -v flameshot >/dev/null 2>&1 && P "flameshot present (screenshots: Print / Super+p under i3)" || W "flameshot not found (screenshots fall back to the in-container shot tool)"
+  # These three auto-install on your first lab launch (donlab's ensure_tools). The doctor only reports, so
+  # a WARN here right after install is expected and harmless -- run a lab and it is handled.
+  command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found -- donlab installs it automatically on your first lab launch (until then, vi)"
+  command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found -- donlab installs it automatically on your first lab launch (until then, pop-up terminals)"
+  command -v flameshot >/dev/null 2>&1 && P "flameshot present (screenshots: Print / Super+p under i3)" || W "flameshot not found -- donlab installs it automatically on your first lab launch (until then, the in-container shot tool)"
   # ARM host: images must be arm64
   if [ "$HOST_ARCH" = arm64 ]; then P "Apple-Silicon host: donlab installs :arm64 images per lab"; fi
   echo
@@ -1645,6 +1666,21 @@ ensure_clipboard
 ensure_terminal_ergonomics
 reset_x_broken_containers   # must run after its definition (was a top-level call above it: 'command not found')
 ensure_i3_statusbar
+
+# ---- launch-time disk heads-up ------------------------------------------------------------------
+# The doctor's full resource check runs on `donlab --doctor`; this is a quick warning at every lab
+# launch so a student who never runs --check still gets a heads-up before a large pull/build fails.
+warn_low_disk() {
+  local kb gb; kb=$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')
+  [ -n "$kb" ] || return 0
+  gb=$((kb/1024/1024))
+  if [ "$gb" -lt 6 ]; then
+    echo "donlab: WARNING -- only ${gb} GB free on /var/lib/docker; image pulls/builds will likely fail. Free space with: donlab --clean"
+  elif [ "$gb" -lt 15 ]; then
+    echo "donlab: heads-up -- only ${gb} GB free on /var/lib/docker; a large lab may run tight (donlab --clean frees space)."
+  fi
+}
+warn_low_disk
 
 # ---- standard (pop-up terminals) mode ----
 # Start the lab FIRST; open the manual only once the containers are actually up, so it does
