@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.6'
+DONLAB_VERSION='1.4.7'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -959,9 +959,11 @@ run_doctor() {
     else F "disk: only ${free_gb} GB free -- image pulls/builds will likely fail"; fi
   fi
   # Editor + terminal multiplexer the labs assume
-  command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found (labs assume vim; vi will be used)"
-  command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found (labs fall back to pop-up terminals)"
-  command -v flameshot >/dev/null 2>&1 && P "flameshot present (screenshots: Print / Super+p under i3)" || W "flameshot not found (screenshots fall back to the in-container shot tool)"
+  # These three auto-install on your first lab launch (donlab's ensure_tools). The doctor only reports, so
+  # a WARN here right after install is expected and harmless -- run a lab and it is handled.
+  command -v vim >/dev/null 2>&1 && P "vim present" || W "vim not found -- donlab installs it automatically on your first lab launch (until then, vi)"
+  command -v tmux >/dev/null 2>&1 && P "tmux present" || W "tmux not found -- donlab installs it automatically on your first lab launch (until then, pop-up terminals)"
+  command -v flameshot >/dev/null 2>&1 && P "flameshot present (screenshots: Print / Super+p under i3)" || W "flameshot not found -- donlab installs it automatically on your first lab launch (until then, the in-container shot tool)"
   # ARM host: images must be arm64
   if [ "$HOST_ARCH" = arm64 ]; then P "Apple-Silicon host: donlab installs :arm64 images per lab"; fi
   echo
