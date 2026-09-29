@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.9'
+DONLAB_VERSION='1.4.10'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -1625,7 +1625,7 @@ ensure_container_x() {
 # container's /run/.don-ctf, run apply.sh as root, and remove both staging copies, exactly like the idempotent post-start docker-exec fixups above. apply.sh
 # guards itself, so re-running a started lab just re-applies (a no-op). Opt out with DONLAB_NO_CTF=1.
 apply_ctf() {
-  local sc="$LTDIR/labs/$LAB/config/start.config" ctfroot="$LTDIR/labs/$LAB/docs/ctf" c cname tmp
+  local sc="$LTDIR/labs/$LAB/config/start.config" ctfroot="$LTDIR/labs/$LAB/docs/ctf" c cname
   [ -z "${DONLAB_NO_CTF:-}" ] && [ -d "$ctfroot" ] && [ -f "$sc" ] || return 0
   for c in $(awk '/^[[:space:]]*CONTAINER[[:space:]]/{print $2}' "$sc" 2>/dev/null); do
     [ -f "$ctfroot/$c.tgz" ] || continue
@@ -1633,14 +1633,13 @@ apply_ctf() {
     [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = true ] || continue
     # Unpack on the host into a private temp dir (no loose plaintext kept on the host), copy in, apply,
     # then remove the staging copy in the container and the temp dir here.
-    tmp="$(mktemp -d)" || continue
-    if tar -xzf "$ctfroot/$c.tgz" -C "$tmp" 2>/dev/null && [ -f "$tmp/apply.sh" ]; then
-      docker exec -u root "$cname" sh -c 'rm -rf /run/.don-ctf && mkdir -p /run/.don-ctf && chmod 700 /run/.don-ctf' >/dev/null 2>&1 \
-        && docker cp "$tmp/." "$cname:/run/.don-ctf/" >/dev/null 2>&1 \
-        && docker exec -u root "$cname" sh -c 'cd /run/.don-ctf && sh ./apply.sh' >/dev/null 2>&1
-      docker exec -u root "$cname" sh -c 'rm -rf /run/.don-ctf' >/dev/null 2>&1 || true
-    fi
-    rm -rf "$tmp"
+    # Extract the payload INSIDE the container (its own mount namespace), NOT via `docker cp`: a systemd
+    # lab container mounts a fresh tmpfs over /run, so docker cp -- which writes the host overlay -- lands
+    # under the tmpfs and the container never sees it. Piping the tgz through `docker exec ... tar` extracts
+    # into the container's own /run, then apply.sh runs there as root; the staging copy is removed after.
+    docker exec -i -u root "$cname" sh -c 'rm -rf /run/.don-ctf && mkdir -p /run/.don-ctf && chmod 700 /run/.don-ctf && tar -xzf - -C /run/.don-ctf' < "$ctfroot/$c.tgz" 2>/dev/null \
+      && docker exec -u root "$cname" sh -c 'cd /run/.don-ctf && sh ./apply.sh' >/dev/null 2>&1
+    docker exec -u root "$cname" sh -c 'rm -rf /run/.don-ctf' >/dev/null 2>&1 || true
   done
 }
 
