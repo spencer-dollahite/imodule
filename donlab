@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.11'
+DONLAB_VERSION='1.4.12'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -916,6 +916,49 @@ LT="$LTDIR/scripts/labtainer-student/bin/labtainer"
 # $LABTAINER_DIR/labs (NOT ~/labs). Ensure it exists; never assume a specific $HOME/user.
 mkdir -p "$LTDIR/labs" 2>/dev/null || true
 
+# ---- registry probe (used by `donlab --doctor`) ------------------------------------------------
+# Proves the path a lab start actually uses to fetch images: HTTPS to Docker Hub, an anonymous pull
+# token for our registry namespace, then a HEAD on one manifest there. A manifest HEAD is not a pull:
+# it moves no bytes and does not count against the Hub's pull allowance, but it answers with the
+# allowance left for this network address (ratelimit-remaining), which is exactly what a lab's pulls
+# will spend. `curl -f` on the v2 endpoint is NOT a reachability test: the registry answers anonymous
+# callers 401 by design (donlab <= 1.4.11 reported every student as offline because of that).
+# stdout, one line:   ok <pulls-left|?>      the whole path works
+#                     quota <pulls-left>     reachable, but the anonymous pull allowance is used up
+#                     offline <curl message> no HTTPS answer at all (DNS, firewall, TLS, no network)
+#                     blocked <stage> <http> a proxy or web filter answered in the registry's place
+#                     error <stage> <http>   the registry answered, but not as expected (try later)
+registry_probe() {
+  local reg="${1:-ssdollahite}" repo="${2:-labtainer.grader}" tag="${3:-arm64}"
+  local ping="https://registry-1.docker.io/v2/" code msg tok hdr left
+  code=$(curl -m 8 -s -o /dev/null -w '%{http_code}' "$ping" 2>/dev/null); code="${code:-000}"
+  case "$code" in 000|5??) sleep 2; code=$(curl -m 8 -s -o /dev/null -w '%{http_code}' "$ping" 2>/dev/null); code="${code:-000}";; esac   # one retry: a Hub blip is not an outage
+  case "$code" in
+    000) msg=$(curl -m 8 -sS -o /dev/null "$ping" 2>&1 | sed -n '1s/^curl: ([0-9]*) //p'); echo "offline ${msg:-no answer within 8 s}"; return 0 ;;
+    200|401) ;;
+    403|407|3??) echo "blocked ping $code"; return 0 ;;
+    *) echo "error ping $code"; return 0 ;;
+  esac
+  tok=$(curl -m 8 -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$reg/$repo:pull" 2>/dev/null \
+        | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ -z "$tok" ]; then
+    code=$(curl -m 8 -s -o /dev/null -w '%{http_code}' "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$reg/$repo:pull" 2>/dev/null)
+    case "${code:-000}" in 403|407|3??) echo "blocked token ${code:-000}" ;; *) echo "error token ${code:-000}" ;; esac; return 0
+  fi
+  hdr=$(curl -m 8 -s -I -H "Authorization: Bearer $tok" \
+        -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+        "https://registry-1.docker.io/v2/$reg/$repo/manifests/$tag" 2>/dev/null | tr -d '\r')
+  code=$(printf '%s\n' "$hdr" | awk 'toupper($1) ~ /^HTTP\// {c=$2} END{print c}'); code="${code:-000}"
+  left=$(printf '%s\n' "$hdr" | awk -F'[: ;]+' 'tolower($1)=="ratelimit-remaining"{print $2; exit}')
+  case "$code" in
+    200) echo "ok ${left:-?}" ;;
+    429) echo "quota ${left:-0}" ;;
+    000) echo "offline no answer from the manifest endpoint" ;;
+    403|407|3??) echo "blocked manifest $code" ;;
+    *) echo "error manifest $code" ;;
+  esac
+}
+
 # ---- environment self-check: `donlab --doctor` -----------------------------------------------
 # A student-runnable readiness check. Each probe is independent, prints PASS/WARN/FAIL, and never
 # aborts; exit is non-zero only if something that WILL break a lab is wrong (no docker, no X).
@@ -943,13 +986,27 @@ run_doctor() {
        && [ "$(xclip -selection clipboard -o 2>/dev/null)" = donlab-clip-test ]; then P "clipboard read/write works (xclip)"
     else W "xclip present but the clipboard round-trip failed (needs a running X session)"; fi
   else W "xclip not installed -- tmux mouse-copy to the system clipboard won't work"; fi
-  # Registry reachability (labs pull images)
-  if [ -n "${DONLAB_NO_PULL:-}" ]; then W "DONLAB_NO_PULL set -- skipping the registry reachability check"
+  # Registry reachability: the real pull path (HTTPS -> anonymous pull token -> manifest HEAD in our
+  # namespace), plus what this VM already holds, so the verdict says whether a lab can START here.
+  local cached; cached=$(docker images --format '{{.Repository}}' 2>/dev/null | grep -cE '(^|/)cs[0-9]{4}-lab[0-9]+\..+\.student$' || true); cached="${cached:-0}"
+  if [ -n "${DONLAB_NO_PULL:-}" ]; then W "DONLAB_NO_PULL set -- skipping the registry check ($cached lab images cached on this VM)"
   elif command -v curl >/dev/null 2>&1; then
-    if curl -m 8 -fsS -o /dev/null "https://registry-1.docker.io/v2/" 2>/dev/null \
-       || curl -m 8 -fsS -o /dev/null "https://index.docker.io/v1/" 2>/dev/null; then P "Docker registry reachable (lab images can be pulled/updated)"
-    else W "could not reach the Docker registry -- labs will run from locally-cached images only"; fi
-  else W "curl not installed -- skipped the registry reachability check"; fi
+    local probe stage left proxy; probe=$(registry_probe); set -- $probe
+    case "$1" in
+      ok)     left="$2"
+              if [ "$left" = "?" ] || [ "$left" -gt 20 ] 2>/dev/null; then P "Docker Hub reachable: lab images can be pulled/updated (anonymous pull allowance: $left left this hour; $cached lab images cached here)"
+              else W "Docker Hub reachable, but only $left anonymous pulls are left this hour for this network address -- a lab that is not yet on this VM may stall mid-download; wait for the hourly reset before starting a new lab ($cached lab images cached here)"; fi ;;
+      quota)  W "Docker Hub reachable, but the anonymous pull allowance for this network address is used up (100 per hour, shared by everyone behind the same public IP) -- a lab already on this VM runs; a new one waits for the hourly reset ($cached lab images cached here)" ;;
+      offline) msg="${probe#offline }"
+              proxy=$(docker info --format '{{.HTTPProxy}} {{.HTTPSProxy}}' 2>/dev/null | tr -s ' ' | sed 's/^ //; s/ $//')
+              if [ "$cached" -gt 0 ]; then W "no answer from Docker Hub ($msg) -- the $cached lab images already on this VM run, but no lab can be downloaded or updated until the network is back${proxy:+ (docker itself is configured for a proxy: $proxy; a pull may still get through it)}"
+              else F "no answer from Docker Hub ($msg) and no lab images are on this VM yet -- no lab can start until the network is back${proxy:+ (docker itself is configured for a proxy: $proxy; a pull may still get through it)}"; fi ;;
+      blocked) stage="$2"
+              W "something between this VM and Docker Hub answered HTTP $3 at the $stage step -- a proxy or web filter is in the way; lab pulls will likely fail on this network ($cached lab images cached here)" ;;
+      *)      stage="${2:-?}"
+              W "Docker Hub answered HTTP ${3:-?} at the $stage step -- registry trouble on their side or ours; try again in a few minutes ($cached lab images cached here)" ;;
+    esac
+  else W "curl not installed -- skipped the registry reachability check ($cached lab images cached here)"; fi
   # Disk headroom for images
   local free_kb; free_kb=$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')
   if [ -n "$free_kb" ]; then
