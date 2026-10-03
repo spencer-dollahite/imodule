@@ -51,7 +51,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.13'
+DONLAB_VERSION='1.4.14'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -1390,6 +1390,11 @@ start_bridge() {   # start (or restart, pointed at THIS lab) the manual bridge; 
 FRMS_PORT="${DONLAB_FRMS_PORT:-5174}"
 start_frms() {     # start (or restart) FRMS for THIS lab's copy of the app; 0 if it answers
   local app="$LTDIR/labs/$LAB/docs/frms" i
+  # in-lab FRMS (frms: in_lab) ships no legacy host-app dir (docs/frms); the host server still MUST run so its
+  # inlab_poller deploys the bundle into hi-web01 and starts frms.service. Serve the in-lab app copy so the
+  # server has a valid app dir (students reach FRMS on hi-web01, not here). Without this the poller never runs
+  # and https://frms.fcdpac.navy.mil never comes up (2026-10-03: students could not connect to FRMS in lab1).
+  [ -f "$app/index.html" ] || app="$LTDIR/labs/$LAB/docs/frms-inlab/app"
   [ -f "$app/index.html" ] && [ -f "$app/frms-data.json" ] || return 1
   command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || return 1
   printf '%s' "$FRMS_B64" | base64 -d > "$CFG/frms-server.py" 2>/dev/null && [ -s "$CFG/frms-server.py" ] || return 1
@@ -1400,6 +1405,15 @@ start_frms() {     # start (or restart) FRMS for THIS lab's copy of the app; 0 i
   for i in 1 2 3 4 5 6; do
     curl -fsS -m2 "http://127.0.0.1:$FRMS_PORT/api/ping" >/dev/null 2>&1 && return 0
     sleep 0.5
+  done
+  return 1
+}
+wait_inlab_frms() {   # in-lab FRMS on hi-web01: wait until :443 is listening so the student's FIRST connection
+  local web="$LAB.hi-web01.student" i   # from the workstation's Firefox gets the CAC picker, not "can't connect".
+  [ "$(docker inspect -f '{{.State.Running}}' "$web" 2>/dev/null)" = true ] || return 0
+  for i in $(seq 1 30); do   # the host poller deploys the bundle + restarts frms.service, which then binds :443
+    docker exec "$web" sh -c '(command -v bash >/dev/null 2>&1 && bash -c "exec 3<>/dev/tcp/127.0.0.1/443") 2>/dev/null || (ss -ltn 2>/dev/null | grep -q ":443 ")' >/dev/null 2>&1 && return 0
+    sleep 1
   done
   return 1
 }
@@ -1420,10 +1434,16 @@ open_manual() {
     echo "donlab: manual + live Check Work / Stop Lab at $url"
     if start_frms; then
       if [ -d "$LTDIR/labs/$LAB/docs/frms-inlab" ]; then
-        # FRMS lives INSIDE this lab (hi-web01, https://frms.fcdpac.navy.mil): students reach it from a lab
-        # workstation's own Firefox. The host server keeps running only to deploy the in-lab bundle and sync
-        # state for grading, so no FRMS tab opens beside the manual.
-        echo "donlab: FRMS runs inside the lab -- open https://frms.fcdpac.navy.mil from a lab workstation"
+        # FRMS lives INSIDE this lab (hi-web01, https://frms.fcdpac.navy.mil): the student opens Firefox INSIDE
+        # the workstation (where the CAC/PKCS#11 module lives) and browses to it -- no tab opens beside the host
+        # manual. The host server keeps running only to deploy the in-lab bundle and sync state for grading.
+        # Wait for the service to listen first, so the student's first connection gets the CAC picker, not a
+        # "can't connect" page.
+        if wait_inlab_frms; then
+          echo "donlab: FRMS is up inside the lab -- in the workstation, open a terminal and run:  firefox https://frms.fcdpac.navy.mil"
+        else
+          echo "donlab: FRMS is still starting inside the lab (give it a few seconds) -- then in the workstation run:  firefox https://frms.fcdpac.navy.mil"
+        fi
       else
         frms="$(frms_url)"
         echo "donlab: FRMS (budget, marketplace, personnel) at $frms"
