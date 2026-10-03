@@ -51,7 +51,12 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 
 # Launcher version. Bump on donlab changes; travels with the published copy (self-update brings
 # the new value -- the graft only preserves the key + channel). The build sha uniquely IDs the copy.
-DONLAB_VERSION='1.4.14'
+# 1.4.16: the host manual must open on any platform -- snap Firefox gets a snap-readable profile
+#         (~/snap/firefox/common), the manual window is verified and re-opened plainly if absent, a
+#         held :5173 names the holder and moves the manual to the next free port (5175..5190), and
+#         the doctor gains platform checks (Wayland, hypervisor tips, GL, /dev/shm, clock, snap, xhost);
+#         `donlab --doctor` no longer dies with "CFG: unbound variable" on a non-i3 desktop.
+DONLAB_VERSION='1.4.16'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -219,6 +224,44 @@ ensure_cgroup2() {
   exit 0
 }
 
+# ---- apt, best effort ---------------------------------------------------------------------
+# A fresh VM is the worst case: stale package lists, unattended-upgrades holding the dpkg lock on
+# first boot, a package name this release does not carry. One unresolvable name used to abort the
+# WHOLE transaction (clipmenu is not packaged by Ubuntu, so on the NPS Ubuntu 24 appliance tmux,
+# vim and flameshot never installed -- "still not on PATH", 2026-10-03). Now: wait for the lock,
+# drop names with no candidate (and say so), install the rest in one go, fall back to one package
+# at a time. apt_install_best_effort <pkg...> -> 0 when every candidate installed.
+APT_SKIPPED=""
+apt_has_candidate() { apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/{print $2}' | grep -qv '^(none)$'; }
+apt_install_best_effort() {
+  local SUDO="" p want=() rc=0 APT="apt-get -o DPkg::Lock::Timeout=180"
+  command -v apt-get >/dev/null 2>&1 || return 1
+  [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+  APT_SKIPPED=""
+  $SUDO $APT update -qq || true
+  for p in "$@"; do
+    if apt_has_candidate "$p"; then want+=("$p"); else APT_SKIPPED="$APT_SKIPPED $p"; fi
+  done
+  [ -z "$APT_SKIPPED" ] || echo "donlab: not packaged on this release, skipped:$APT_SKIPPED"
+  [ ${#want[@]} -gt 0 ] || return 0
+  if ! $SUDO env DEBIAN_FRONTEND=noninteractive $APT install -y "${want[@]}"; then
+    echo "donlab: installing ${want[*]} together failed; trying one package at a time."
+    for p in "${want[@]}"; do
+      $SUDO env DEBIAN_FRONTEND=noninteractive $APT install -y "$p" || { echo "donlab: could not install $p"; rc=1; }
+    done
+  fi
+  hash -r 2>/dev/null || true
+  return $rc
+}
+# has_graphical_seat: this machine runs a desktop login (a display manager / X server is up), even
+# when THIS shell has no DISPLAY (ssh in from the host, a text console). Then the desktop is still
+# worth preparing (i3, flameshot) instead of silently skipping it; a headless box stays untouched.
+has_graphical_seat() {
+  pgrep -x 'gdm3|gdm|lightdm|sddm|lxdm|Xorg|Xwayland' >/dev/null 2>&1 && return 0
+  systemctl is-active -q display-manager.service 2>/dev/null && return 0
+  return 1
+}
+
 # ---- make sure the lab helpers (tmux + vim + flameshot) are present -----------------------
 # tmux: without it the framework opens a pop-up terminal per container; tmux keeps every host in
 # one window. (The appliance's "black full-screen console" was NOT a pop-up: it was the Kali
@@ -228,29 +271,32 @@ ensure_cgroup2() {
 # vim missing -> vi, flameshot missing -> the in-container `shot`). Honors --no-tmux for tmux; vim
 # is installed regardless.
 ensure_tools() {
-  local want=() p SUDO=""
+  local want=() p
   command -v tmux >/dev/null 2>&1 || { [ "${USE_TMUX:-1}" = 1 ] && want+=(tmux); }
   command -v vim  >/dev/null 2>&1 || want+=(vim)
   command -v xclip >/dev/null 2>&1 || want+=(xclip)   # bridge tmux selection -> X clipboard
   command -v spice-vdagent >/dev/null 2>&1 || want+=(spice-vdagent)  # UTM/Mac host <-> guest clipboard
-  command -v clipmenud >/dev/null 2>&1 || want+=(clipmenu)            # keep clipboard after the source app closes
+  command -v clipmenud >/dev/null 2>&1 || want+=(clipmenu)   # keep clipboard after the source app closes (optional: not every release packages it)
   # flameshot: the go-to screenshot tool for lab reports (region select + arrows/highlight/blur,
-  # saves straight to ~/labtainer_xfer/screenshots). Only worth installing where there is a display.
-  if [ -n "${DISPLAY:-}" ]; then command -v flameshot >/dev/null 2>&1 || want+=(flameshot); fi
+  # saves straight to ~/labtainer_xfer/screenshots). Only worth installing where there is a desktop.
+  if [ -n "${DISPLAY:-}" ] || has_graphical_seat; then
+    command -v flameshot >/dev/null 2>&1 || want+=(flameshot)
+    command -v xdotool >/dev/null 2>&1 || want+=(xdotool)   # lets donlab confirm the manual window opened (optional)
+  fi
   # picom: a compositor so gnome-terminal transparency renders under i3 (XFCE has its own).
   if [ "${XDG_CURRENT_DESKTOP:-}" = i3 ] || pgrep -x i3 >/dev/null 2>&1; then
     command -v picom >/dev/null 2>&1 || want+=(picom)
   fi
   [ ${#want[@]} -gt 0 ] || return 0
   command -v apt-get >/dev/null 2>&1 || return 0       # only know how to install on Debian/Ubuntu
-  [ "$(id -u)" -ne 0 ] && SUDO="sudo"
   # Run in the FOREGROUND (not a spinner) so sudo's password prompt is visible -- the appliance's
-  # sudo needs a password. apt-get update first, since a fresh appliance's package lists are stale.
+  # sudo may need a password.
   echo "==> Installing lab helpers: ${want[*]} (sudo may ask for your appliance password)."
-  $SUDO apt-get update -qq || true
-  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y ${want[*]} \
-    || echo "donlab: couldn't install ${want[*]} automatically. Run once: sudo apt-get update && sudo apt-get install -y ${want[*]}"
-  for p in "${want[@]}"; do command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi, flameshot -> shot in the container)."; done
+  apt_install_best_effort "${want[@]}" \
+    || echo "donlab: some helpers did not install. Run once: sudo apt-get update && sudo apt-get install -y ${want[*]}"
+  for p in tmux vim xclip flameshot; do   # the ones a lab step depends on; the rest are nice-to-have
+    case " ${want[*]} " in *" $p "*) command -v "$p" >/dev/null 2>&1 || echo "donlab: $p still not on PATH; labs will fall back (tmux -> pop-ups, vim -> vi, flameshot -> shot in the container)." ;; esac
+  done
 }
 
 # ---- which desktop are we in? (i3 first-class, then XFCE, GNOME, other) -----------------------
@@ -259,11 +305,91 @@ ensure_tools() {
 detect_desktop() {
   case "${XDG_CURRENT_DESKTOP:-}" in
     *i3*) echo i3; return ;; *XFCE*) echo xfce; return ;; *GNOME*|*ubuntu*|*Unity*) echo gnome; return ;;
+    *LXDE*|*LXQt*) echo lxde; return ;;
   esac
   if pgrep -x i3 >/dev/null 2>&1; then echo i3
   elif pgrep -x xfwm4 >/dev/null 2>&1 || pgrep -x xfce4-session >/dev/null 2>&1; then echo xfce
   elif pgrep -x gnome-shell >/dev/null 2>&1; then echo gnome
+  elif pgrep -x lxsession >/dev/null 2>&1 || pgrep -x lxpanel >/dev/null 2>&1; then echo lxde   # the stock Labtainers VM
   else echo other; fi
+}
+
+# ---- the host Firefox: Ubuntu snap or classic package? -----------------------------------------
+# The snap is confined: it cannot read hidden directories under $HOME (so a profile under
+# ~/.config/don-range is "cannot be loaded" and the window never appears) and cannot see /tmp.
+# The Ubuntu 24 appliance ships the snap, usually behind a /usr/bin/firefox wrapper that execs it.
+firefox_is_snap() {
+  local f r
+  f="$(command -v firefox 2>/dev/null)" || return 1
+  case "$f" in /snap/*) return 0 ;; esac
+  r="$(readlink -f "$f" 2>/dev/null)"; case "$r" in /snap/*) return 0 ;; esac
+  grep -qsE '/snap/bin/firefox|snap run firefox' "${r:-$f}" 2>/dev/null && return 0   # the transitional deb wrapper
+  if command -v snap >/dev/null 2>&1 && snap list firefox >/dev/null 2>&1; then
+    [ -x "${DONLAB_FIREFOX_DEB:-/usr/lib/firefox/firefox}" ] || return 0   # snap installed, no classic binary
+  fi
+  return 1
+}
+# manual_profile_dir: THE location of the manual's Firefox profile, for every call site. Classic
+# Firefox: $CFG/firefox-manual (unchanged). Snap Firefox: a snap-readable place, ~/snap/firefox/common.
+manual_profile_dir() {
+  if firefox_is_snap; then echo "$HOME/snap/firefox/common/don-range-manual"; else echo "$CFG/firefox-manual"; fi
+}
+
+# ---- which terminal emulator to open for the student (environment detection, desktop-aware) ------
+# The desktop's own terminal first (it carries that session's fonts, colors and clipboard), then the
+# Debian alternative, then xterm. Prints the program; fails if none is installed.
+pick_terminal() {
+  local pref=() t
+  case "$(detect_desktop)" in
+    xfce)  pref=(xfce4-terminal gnome-terminal x-terminal-emulator lxterminal xterm) ;;
+    gnome) pref=(gnome-terminal x-terminal-emulator xfce4-terminal lxterminal xterm) ;;
+    lxde)  pref=(lxterminal x-terminal-emulator gnome-terminal xfce4-terminal xterm) ;;
+    i3)    pref=(gnome-terminal xfce4-terminal x-terminal-emulator lxterminal xterm) ;;
+    *)     pref=(x-terminal-emulator gnome-terminal xfce4-terminal lxterminal mate-terminal konsole xterm) ;;
+  esac
+  for t in "${pref[@]}"; do command -v "$t" >/dev/null 2>&1 && { echo "$t"; return 0; }; done
+  return 1
+}
+# open_terminal_with <title> <command...>: run a command in a new, detached terminal window (non-fatal).
+open_terminal_with() {
+  local title="$1" t; shift; t="$(pick_terminal)" || return 1
+  case "$t" in
+    gnome-terminal) (setsid "$t" --title="$title" -- "$@" >/dev/null 2>&1 &) ;;
+    xfce4-terminal|lxterminal) (setsid "$t" -T "$title" -e "$*" >/dev/null 2>&1 &) ;;
+    mate-terminal)  (setsid "$t" -t "$title" -e "$*" >/dev/null 2>&1 &) ;;
+    konsole)        (setsid "$t" -p tabtitle="$title" -e "$@" >/dev/null 2>&1 &) ;;
+    *)              (setsid "$t" -T "$title" -e "$@" >/dev/null 2>&1 &) ;;   # xterm, x-terminal-emulator
+  esac
+}
+# open_popups_fallback: the framework's own per-host terminals (moreterm.py) when tmux cannot be used.
+# tmux mode suppresses the pop-ups at start, so without this a student would be left with NO terminal
+# at all. One terminal per visible, running host; succeeds if at least one opened.
+open_popups_fallback() {
+  local SC="$LTDIR/labs/$LAB/config/start.config" SB="$LTDIR/scripts/labtainer-student" c cur key val junk running opened=0 i pat
+  [ -f "$SC" ] || return 1
+  running=$(docker ps --format '{{.Names}}'); declare -A T; cur=""
+  while read -r key val junk; do case "$key" in CONTAINER) cur="$val"; T[$cur]=1 ;; TERMINALS) [ -n "$cur" ] && T[$cur]="$val" ;; esac; done < "$SC"
+  for c in "${!T[@]}"; do
+    if [ "${T[$c]}" = 0 ] || [ "${T[$c]}" = -1 ]; then continue; fi
+    grep -qx "$LAB.$c.student" <<<"$running" || continue
+    # The framework's own pop-up (moreterm.py) is gnome-terminal over the session bus; where both
+    # exist use it (the standard look) and confirm a shell attached, else open our own terminal
+    # (desktop-aware pick_terminal) running the same docker exec. No bus, no gnome-terminal, no
+    # silent nothing: the student gets a shell on every visible host either way.
+    pat="docker exec -it .*$LAB\\.$c\\.student"
+    if [ -f "$SB/bin/moreterm.py" ] && command -v gnome-terminal >/dev/null 2>&1 && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+      ( cd "$SB" && setsid python3 bin/moreterm.py "$LAB" "$c" >/dev/null 2>&1 & )
+      for i in 1 2 3 4 5 6; do pgrep -f "$pat" >/dev/null 2>&1 && break; sleep 1; done
+      pgrep -f "$pat" >/dev/null 2>&1 && { opened=$((opened+1)); continue; }
+    fi
+    open_terminal_with "$LAB: $c" docker exec -it -e TERM=xterm-256color "$LAB.$c.student" bash -l && opened=$((opened+1))
+  done
+  [ "$opened" -gt 0 ]
+}
+# tmux_fallback <reason>: tmux could not be used -- say why, then open the standard terminals instead.
+tmux_fallback() {
+  echo "donlab: $1 -- opening the standard per-host terminals instead (prefer them with --no-tmux)."
+  open_popups_fallback || echo "donlab: open a host shell with:  docker exec -it $LAB.<host>.student bash -l"
 }
 
 # ---- i3, opinionated ---------------------------------------------------------------------------
@@ -298,7 +424,7 @@ exec --no-startup-id xset s off -dpms
 # Lab containers display their GUI apps on this X server; grant local clients access so
 # Firefox-in-a-container does not fail with "cannot connect to display :0" under i3.
 exec --no-startup-id sh -c 'xhost +local: >/dev/null 2>&1 || true'
-exec --no-startup-id picom -b --backend xrender
+exec --no-startup-id sh -c 'command -v picom >/dev/null && exec picom -b --backend xrender; command -v compton >/dev/null && exec compton -b'
 exec --no-startup-id sh -c 'for f in $CFG/nps-logo.png /usr/share/backgrounds/don-range/nps-logo.png; do [ -f "\$f" ] && { feh --image-bg black --bg-center "\$f"; break; }; done'
 exec --no-startup-id sh -c 'M=\$(xrandr | awk "/ connected/{print \\\$1; exit}"); [ -n "\$M" ] && xrandr --output "\$M" --mode 1920x1080 2>/dev/null || true'
 # first terminal (shows the one-time quick start after donlab switched you to i3)
@@ -436,55 +562,79 @@ ensure_cdlab() {   # `cdlab` -> the Labtainers student directory; ~/.bashrc, onc
     && echo "donlab: added 'cdlab' to ~/.bashrc (cd to $ls_dir)."
 }
 ensure_i3_session() {
-  local SUDO="" d marker="$CFG/i3-switched" xs=/usr/share/xsessions/i3.desktop i u
-  [ -n "${DISPLAY:-}" ] && [ -z "${DONLAB_NO_I3:-}" ] && [ "${NO_I3:-0}" != 1 ] || return 0
-  d="$(detect_desktop)"
+  [ "${TMUX_CHECK:-0}" = 1 ] && return 0   # --tmux-check: never switch/reboot the desktop
+  local SUDO="" d marker="$CFG/i3-switched" retry="$CFG/i3-retry" xs="${DONLAB_I3_XSESSION:-/usr/share/xsessions/i3.desktop}" u what
+  [ -z "${DONLAB_NO_I3:-}" ] && [ "${NO_I3:-0}" != 1 ] || return 0
+  # No DISPLAY: an ssh session from the host, or a text console. If this machine has a desktop
+  # login anyway (the VM does), prepare it from here; a headless box is left alone.
+  if [ -z "${DISPLAY:-}" ]; then has_graphical_seat || return 0; d=console; else d="$(detect_desktop)"; fi
   if [ "$d" = i3 ]; then write_i3_files "$LTDIR/scripts/labtainer-student"; return 0; fi
-  if [ -f "$marker" ]; then
-    echo "donlab: i3 is set as your login session, but this session is $d. Log out and pick \"i3\" at the"
-    echo "        login screen (or run donlab --no-i3 / export DONLAB_NO_I3=1 to stay in $d)."
-    return 0
+  if [ -f "$marker" ] && [ "$d" != console ]; then
+    # A previous run set i3 and rebooted, yet this is $d: the login manager fell back (GDM does so when
+    # the saved SessionType still says wayland). Repair the record and reboot ONCE more; after that,
+    # leave the choice to the student.
+    if [ -f "$retry" ]; then
+      echo "donlab: i3 is set as your login session, but this session is $d. Log out and pick \"i3\" at the"
+      echo "        login screen (gear icon), or run donlab --no-i3 / export DONLAB_NO_I3=1 to stay in $d."
+      return 0
+    fi
+    echo "donlab: the login session was set to i3 but the desktop came back as $d; repairing the session record."
+    touch "$retry"
   fi
-  if [ ! -d /etc/lightdm ] && [ ! -d /var/lib/AccountsService ]; then
-    echo "donlab: no lightdm / AccountsService here; staying in $d (i3 switch skipped)."; return 0
+  if [ ! -d "${DONLAB_LIGHTDM_DIR:-/etc/lightdm}" ] && [ ! -d "${DONLAB_ACCOUNTS_DIR:-/var/lib/AccountsService}" ] && [ ! -d /etc/gdm3 ]; then
+    echo "donlab: no lightdm / GDM / AccountsService here; staying in $d (i3 switch skipped)."; return 0
   fi
   [ "$(id -u)" -ne 0 ] && SUDO="sudo"
   if [ ! -f "$xs" ]; then
     command -v apt-get >/dev/null 2>&1 || { echo "donlab: i3 is not installed and only apt is supported; staying in $d."; return 0; }
     echo "==> Installing i3 (tiling window manager) + helpers (sudo may ask for your password)."
-    $SUDO apt-get update -qq || true
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y i3 suckless-tools feh xclip picom >/dev/null \
-      || { echo "donlab: could not install i3; staying in $d."; return 0; }
-    [ -f "$xs" ] || { echo "donlab: i3 installed but has no session entry; staying in $d."; return 0; }
+    apt_install_best_effort i3 suckless-tools feh xclip picom >/dev/null || true   # helpers are best effort; i3 is what matters
+    [ -f "$xs" ] || { echo "donlab: could not install i3 (no session entry at $xs); staying in $d. Run once: sudo apt-get update && sudo apt-get install -y i3"; return 0; }
   fi
   write_i3_files "$LTDIR/scripts/labtainer-student"
   touch "$CFG/i3-welcome-pending"
   u="$(id -un)"
-  if [ -d /etc/lightdm ]; then
-    printf '[Seat:*]\nuser-session=i3\nautologin-session=i3\n' | $SUDO tee /etc/lightdm/lightdm.conf.d/60-donlab-i3.conf >/dev/null \
-      || { echo "donlab: could not write the lightdm session setting; staying in $d."; rm -f "$CFG/i3-welcome-pending"; return 0; }
-  fi
-  if [ -d /var/lib/AccountsService/users ]; then
-    $SUDO python3 - "$u" <<'PY' 2>/dev/null || true
-import os, re, sys
-u = sys.argv[1]; p = '/var/lib/AccountsService/users/' + u
-s = open(p).read() if os.path.exists(p) else '[User]\n'
-if '[User]' not in s: s = '[User]\n' + s
-for k in ('XSession', 'Session'):
-    if re.search(r'^%s=' % k, s, re.M): s = re.sub(r'^%s=.*$' % k, k + '=i3', s, flags=re.M)
-    else: s = s.replace('[User]\n', '[User]\n%s=i3\n' % k, 1)
-open(p, 'w').write(s)
-PY
-  fi
-  printf '[Desktop]\nSession=i3\n' > "$HOME/.dmrc" 2>/dev/null || true
+  set_login_session_i3 "$u" || { echo "donlab: could not record i3 as the login session; staying in $d."; rm -f "$CFG/i3-welcome-pending"; return 0; }
   touch "$marker"
   echo
-  echo "donlab: switching your login session from $d to i3 (the tiling desktop the labs are designed for)."
-  echo "        Rebooting in 10 s -- press Ctrl-C to stay in $d for now (i3 is then offered at the login"
+  if [ "$d" = console ]; then what="the VM's desktop login session"; else what="your login session from $d"; fi
+  echo "donlab: switching $what to i3 (the tiling desktop the labs are designed for)."
+  echo "        Rebooting in 10 s -- press Ctrl-C to stay put for now (i3 is then offered at the login"
   echo "        screen). A quick-start window with the keys opens on the first i3 login."
   for i in 10 9 8 7 6 5 4 3 2 1; do printf '\r        reboot in %2d s ' "$i"; sleep 1; done; echo
   $SUDO systemctl reboot 2>/dev/null || $SUDO reboot
   exit 0
+}
+# set_login_session_i3 <user>: make i3 the session every login manager picks for this user.
+#  lightdm: a seat default (+ autologin session). GDM / AccountsService: the per-user record --
+#  Session, XSession AND SessionType=x11. GDM honours the saved Session only if the saved type
+#  matches, and the Ubuntu 24 appliance records "wayland" after a GNOME login: without that line
+#  GDM found no wayland session named i3 and fell back to GNOME after donlab's reboot (the
+#  "donlab never switched me to i3" report, 2026-10-03). ~/.dmrc covers the older managers.
+#  DONLAB_LIGHTDM_DIR / DONLAB_ACCOUNTS_DIR exist for the test harness. 0 if one mechanism took.
+set_login_session_i3() {
+  local u="$1" ok=1 SUDO="" ld="${DONLAB_LIGHTDM_DIR:-/etc/lightdm}" acc="${DONLAB_ACCOUNTS_DIR:-/var/lib/AccountsService}"
+  [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+  if [ -d "$ld" ]; then
+    $SUDO mkdir -p "$ld/lightdm.conf.d" 2>/dev/null || true
+    printf '[Seat:*]\nuser-session=i3\nautologin-session=i3\n' | $SUDO tee "$ld/lightdm.conf.d/60-donlab-i3.conf" >/dev/null && ok=0
+  fi
+  if [ -d "$acc" ] || [ -d /etc/gdm3 ]; then
+    $SUDO mkdir -p "$acc/users" 2>/dev/null || true
+    $SUDO python3 - "$acc/users/$u" <<'PY' && ok=0
+import os, re, sys
+p = sys.argv[1]
+s = open(p).read() if os.path.exists(p) else '[User]\n'
+if '[User]' not in s: s = '[User]\n' + s
+for k, v in (('XSession', 'i3'), ('Session', 'i3'), ('SessionType', 'x11')):
+    if re.search(r'^%s=' % k, s, re.M): s = re.sub(r'^%s=.*$' % k, '%s=%s' % (k, v), s, flags=re.M)
+    else: s = s.replace('[User]\n', '[User]\n%s=%s\n' % (k, v), 1)
+open(p, 'w').write(s)
+PY
+    $SUDO systemctl try-restart accounts-daemon.service >/dev/null 2>&1 || true   # re-read the record now
+  fi
+  printf '[Desktop]\nSession=i3\n' > "$HOME/.dmrc" 2>/dev/null || true
+  return $ok
 }
 
 # ---- dark desktop (i3 / XFCE / GNOME) -------------------------------------------------------
@@ -798,10 +948,14 @@ for a in "$@"; do
     --doctor|--check)   DOCTOR=1 ;;
     --clean)         CLEAN=1 ;;
     --tmux)          USE_TMUX=1 ;;
+    --tmux-check)    TMUX_CHECK=1 ;;   # battery/self-test: lay out tmux for a RUNNING lab, verify, exit
     --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
     *)               PASS+=("$a") ;;
   esac
 done
+# donlab's own state dir, set here for EVERY path. `donlab --doctor` reads $CFG/i3-switched and used to
+# die with "CFG: unbound variable" on any desktop other than i3 (CFG was set only after the doctor exited).
+CFG="$HOME/.config/don-range"; mkdir -p "$CFG" 2>/dev/null || true; chmod 700 "$CFG" 2>/dev/null || true
 if [ -n "${SCROLL_SET:-}" ]; then
   CFG="$HOME/.config/don-range"; mkdir -p "$CFG"; chmod 700 "$CFG" 2>/dev/null || true
   scroll_set_mode "$SCROLL_SET" || exit 1
@@ -962,11 +1116,87 @@ registry_probe() {
 # ---- environment self-check: `donlab --doctor` -----------------------------------------------
 # A student-runnable readiness check. Each probe is independent, prints PASS/WARN/FAIL, and never
 # aborts; exit is non-zero only if something that WILL break a lab is wrong (no docker, no X).
+# ---- doctor: platform checks (session type, hypervisor, GL, /dev/shm, clock, snap Firefox, X access) ----
+# One friendly line per finding through the doctor's P/W/F/I printers (run_doctor defines them; the test
+# harness ci/test_donlab_doctor_matrix.sh supplies its own). Report only: nothing here changes the VM.
+doctor_platform_checks() {
+  local v="" r="" shm_kb="" hdr="" now="" net="" skew="" xh=""
+  # (a) login session type: lab windows (the containers' Firefox/Wireshark) are X11 clients
+  case "${XDG_SESSION_TYPE:-}" in
+    wayland) W "You are logged into a Wayland session. Lab windows need X11: log out, click the gear on the login screen, choose 'Ubuntu on Xorg' (or i3), and log back in. donlab's i3 switch sets this up on the first lab launch." ;;
+    x11) P "login session type: X11 (lab windows can display)" ;;
+  esac
+  # (b) hypervisor, with the display tip that matters on each one
+  v="$(systemd-detect-virt 2>/dev/null || true)"
+  case "$v" in
+    oracle)
+      P "VirtualBox guest"
+      I "VirtualBox tip: with the VM powered off, Settings > Display > Graphics Controller = VMSVGA, Video Memory = 128 MB, 3D Acceleration off. This improves Firefox stability in the labs."
+      I "On Windows, a green turtle icon in the VM window's corner means Hyper-V or Core Isolation is active on the host and the VM runs slowly; see the setup guide." ;;
+    vmware)
+      P "VMware guest"
+      I "VMware tip: if windows stay blank, turn 3D acceleration off in the VM's display settings." ;;
+    microsoft)
+      P "Hyper-V guest (Windows host)"
+      I "If the labs feel slow under Hyper-V, see the setup guide's Hyper-V notes." ;;
+    apple)
+      P "UTM guest (Apple Virtualization)"
+      I "UTM tip: if Firefox is blank or shows red artifacts, set the VM Display to virtio-ramfb (no GPU acceleration)." ;;
+    kvm|qemu)
+      if [ "$HOST_ARCH" = arm64 ]; then
+        P "UTM/QEMU guest"
+        I "UTM tip: if Firefox is blank or shows red artifacts, set the VM Display to virtio-ramfb (no GPU acceleration)."
+      else P "KVM/QEMU guest"; fi ;;
+    parallels) P "Parallels guest" ;;
+    none|"") : ;;
+    *) P "hypervisor: $v" ;;
+  esac
+  # (c) OpenGL renderer: software rendering is fine; a failing query points at the VM's 3D setting
+  if [ -n "${DISPLAY:-}" ] && command -v glxinfo >/dev/null 2>&1; then
+    r="$(glxinfo -B 2>/dev/null | sed -n 's/^ *OpenGL renderer string: *//p' | head -1)"
+    case "$r" in
+      "") W "glxinfo could not query OpenGL on $DISPLAY -- if Firefox windows stay blank, turn 3D acceleration off in the VM's display settings" ;;
+      *llvmpipe*|*softpipe*) I "Your VM has no 3D acceleration. Lab apps use software rendering: a little slower, and it works for the labs. Nothing to do." ;;
+      *SVGA3D*) P "3D acceleration through the VMware SVGA driver (vmwgfx): $r" ;;
+      *) P "OpenGL renderer: $r" ;;
+    esac
+  fi
+  # (d) /dev/shm: Firefox shares memory between its processes there; a tiny one crashes tabs
+  shm_kb="$(df -Pk /dev/shm 2>/dev/null | awk 'NR==2{print $2}')"
+  if [ -n "$shm_kb" ]; then
+    if [ "$shm_kb" -lt 262144 ] 2>/dev/null; then W "/dev/shm is only $((shm_kb/1024)) MB -- Firefox tabs may crash; enlarge it with: sudo mount -o remount,size=1G /dev/shm"
+    else P "/dev/shm: $((shm_kb/1024)) MB"; fi
+  fi
+  # (e) clock skew against the network (the imodule host's Date header): CAC certificates and TLS need a
+  # correct clock, and a VM that was suspended wakes up with yesterday's time.
+  if command -v curl >/dev/null 2>&1; then
+    hdr="$(curl -sI -m 8 https://raw.githubusercontent.com/ 2>/dev/null | grep -im1 '^date:' | sed 's/^[Dd][Aa][Tt][Ee]: *//; s/\r$//')"
+    if [ -n "$hdr" ]; then
+      net="$(date -u -d "$hdr" +%s 2>/dev/null)"; now="$(date -u +%s 2>/dev/null)"
+      if [ -n "$net" ] && [ -n "$now" ]; then
+        skew=$((now - net)); [ "$skew" -lt 0 ] && skew=$((-skew))
+        if [ "$skew" -gt 300 ]; then W "this VM's clock is off by about $((skew/60)) minutes -- the CAC certificates and TLS are likely to fail until it is fixed (a suspended VM drifts): sudo timedatectl set-ntp true"
+        else P "clock within ${skew}s of network time"; fi
+      fi
+    fi
+  fi
+  # (f) snap Firefox: the manual's profile has to live where the snap may read
+  if firefox_is_snap; then I "host Firefox is the Ubuntu snap -- donlab keeps the manual's browser profile under ~/snap/firefox/common, a place the snap may read"; fi
+  # (g) X access for local clients (the lab containers connect to this display as local clients)
+  if [ -n "${DISPLAY:-}" ] && command -v xhost >/dev/null 2>&1; then
+    xh="$(xhost 2>/dev/null)"
+    if [ -n "$xh" ]; then
+      if printf '%s\n' "$xh" | grep -q 'LOCAL:'; then P "X access for local clients granted (xhost LOCAL:)"
+      else I "X access for local clients is not granted yet -- donlab grants it at lab start (xhost +local:)"; fi
+    fi
+  fi
+}
 run_doctor() {
   local fail=0 warn=0
   P(){ printf '  \033[32mPASS\033[0m %s\n' "$1"; }
   W(){ printf '  \033[33mWARN\033[0m %s\n' "$1"; warn=$((warn+1)); }
   F(){ printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail+1)); }
+  I(){ printf '  \033[36mINFO\033[0m %s\n' "$1"; }
   echo "donlab doctor -- $DONLAB_VERSION (channel: $CHANNEL, host: $(uname -m 2>/dev/null))"
   echo "Labtainers tree: $LTDIR"
   # Docker daemon
@@ -980,6 +1210,13 @@ run_doctor() {
     elif command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo >/dev/null 2>&1; then P "X display $DISPLAY reachable"
     else W "DISPLAY=$DISPLAY is set but X did not answer (run from the desktop, not over plain ssh)"; fi
   else W "no DISPLAY set -- GUI lab steps (Firefox/Wireshark) need a desktop session"; fi
+  # Where are we running? hypervisor + login session (the environment-specific gotchas live here)
+  _d="$(detect_desktop)"
+  doctor_platform_checks
+  if [ -z "${DISPLAY:-}" ] && has_graphical_seat; then W "this shell has no DISPLAY but the machine runs a desktop -- run donlab from a terminal ON that desktop for the GUI steps"; fi
+  if [ "$_d" = i3 ]; then P "desktop session: i3"
+  elif [ -f "$CFG/i3-switched" ]; then W "login session set to i3 but this session is $_d (log out and pick i3 at the login screen, or donlab --no-i3)"
+  elif [ -n "${DISPLAY:-}" ]; then W "desktop session: $_d -- donlab switches the login session to i3 on the first lab launch (DONLAB_NO_I3=1 keeps $_d)"; fi
   # Clipboard (copy/paste between host and lab)
   if command -v xclip >/dev/null 2>&1; then
     if [ -n "${DISPLAY:-}" ] && printf donlab-clip-test | xclip -selection clipboard -in >/dev/null 2>&1 \
@@ -1224,6 +1461,7 @@ prune_superseded() {
   echo "donlab: removed superseded lab images no longer in use (freed about $(( (a - b) / 1024 )) MB)."
 }
 refresh_images() {
+  [ "${TMUX_CHECK:-0}" = 1 ] && return 0   # --tmux-check: inspect only
   local sc="$LTDIR/labs/$LAB/config/start.config" reg tag c img before after changed=() missing=()
   [ -f "$sc" ] || return 0
   reg="$(awk '/^[[:space:]]*REGISTRY[[:space:]]/{print $2; exit}' "$sc")"; reg="${reg:-ssdollahite}"
@@ -1368,12 +1606,54 @@ write_bridge() {
   printf '%s' "$BRIDGE_B64" | base64 -d > "$CFG/lab-bridge.py" 2>/dev/null
   [ -s "$CFG/lab-bridge.py" ]
 }
+# ---- is 127.0.0.1:<port> taken, and by whom? (ss, then lsof, then a plain connect probe) ----
+port_busy() {   # 0 when something listens on port $1
+  local p="$1"
+  if command -v ss >/dev/null 2>&1; then ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$p\$" && return 0; return 1; fi
+  if command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0; return 1; fi
+  (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && return 0
+  return 1
+}
+port_holder() {   # "<program> (pid N: <command line>)" of the listener on port $1; empty when unknown
+  local p="$1" line="" pid="" comm="" args=""
+  if command -v ss >/dev/null 2>&1; then
+    line="$(ss -ltnp 2>/dev/null | awk -v re="[:.]$p\$" '$4 ~ re {print; exit}')"
+    pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9]*\).*/\1/p')"
+    comm="$(printf '%s' "$line" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')"
+  fi
+  if [ -z "$pid" ] && command -v lsof >/dev/null 2>&1; then pid="$(lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | head -1)"; fi
+  [ -n "$pid" ] || return 0
+  [ -n "$comm" ] || comm="$(ps -o comm= -p "$pid" 2>/dev/null)"
+  args="$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-80)"
+  printf '%s (pid %s%s)' "${comm:-a program}" "$pid" "${args:+: $args}"
+}
+# The manual's saved report text lives in the browser per ORIGIN (127.0.0.1:5173), so the preferred port
+# (BRIDGE_PORT, DONLAB_BRIDGE_PORT when set) is tried first on each start; only a port another program
+# holds moves the manual to the next free one of 5175..5190 (5174 is FRMS), with the holder named and
+# the way back explained. 0 = BRIDGE_PORT is usable (possibly changed); 1 = nothing free.
+pick_bridge_port() {
+  local want="$BRIDGE_PORT" p holder
+  port_busy "$want" || return 0
+  holder="$(port_holder "$want")"
+  echo "donlab: port 127.0.0.1:$want (the lab manual) is held by ${holder:-another program}."
+  echo "        To get it back: stop that program${holder:+ (kill the pid above)} and start the lab again, or run donlab with DONLAB_BRIDGE_PORT=<port>."
+  for p in $(seq 5175 5190); do
+    [ "$p" = "$want" ] && continue
+    port_busy "$p" && continue
+    BRIDGE_PORT="$p"
+    echo "        Serving the manual on 127.0.0.1:$p for this session. Report text you saved earlier is tied to :$want in the browser and shows again once the manual runs there."
+    return 0
+  done
+  echo "        No free port between 5175 and 5190 either; the manual opens read-only from its file (the live buttons need the bridge)."
+  return 1
+}
 start_bridge() {   # start (or restart, pointed at THIS lab) the manual bridge; 0 if it answers
   command -v python3 >/dev/null 2>&1 || return 1
   command -v curl    >/dev/null 2>&1 || return 1
   [ -f "$LTDIR/labs/$LAB/docs/$LAB.html" ] || return 1
   write_bridge || return 1
   pkill -f "$CFG/lab-bridge.py" 2>/dev/null; sleep 0.3
+  pick_bridge_port || return 1
   LABTAINER_DIR="$LTDIR" PREVIEW_DIR="$LTDIR/labs/$LAB/docs" PORT="$BRIDGE_PORT" \
     setsid python3 "$CFG/lab-bridge.py" >"$CFG/lab-bridge.out" 2>&1 </dev/null &
   local i
@@ -1399,6 +1679,11 @@ start_frms() {     # start (or restart) FRMS for THIS lab's copy of the app; 0 i
   command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || return 1
   printf '%s' "$FRMS_B64" | base64 -d > "$CFG/frms-server.py" 2>/dev/null && [ -s "$CFG/frms-server.py" ] || return 1
   pkill -f "$CFG/frms-server.py" 2>/dev/null; sleep 0.3
+  if port_busy "$FRMS_PORT"; then   # the manual links to this fixed port, so it cannot move: name the holder
+    local holder; holder="$(port_holder "$FRMS_PORT")"
+    echo "donlab: port 127.0.0.1:$FRMS_PORT (FRMS) is held by ${holder:-another program}; stop it${holder:+ (kill the pid above)} and start the lab again for FRMS."
+    return 1
+  fi
   FRMS_PORT="$FRMS_PORT" MANUAL_PORT="$BRIDGE_PORT" FRMS_APP_DIR="$app" FRMS_ENGINE="$app/game-engine.js" \
     FRMS_DATA="$app/frms-data.json" FRMS_STATE_DIR="$CFG/frms" \
     setsid python3 "$CFG/frms-server.py" >"$CFG/frms-server.out" 2>&1 </dev/null &
@@ -1420,15 +1705,62 @@ wait_inlab_frms() {   # in-lab FRMS on hi-web01: wait until :443 is listening so
 frms_url() { echo "http://127.0.0.1:$FRMS_PORT/?course=${LAB%%-*}&lab=$LAB"; }
 # Keep the manual as the active tab: FRMS is opened into the running manual browser, and this pref
 # makes a tab opened from outside the browser load in the background.
+# The profile lives at manual_profile_dir (snap-aware); a legacy $CFG/firefox-manual/user.js is carried over
+# once. A lock left by a crashed VM ("Firefox is already running, but is not responding") is cleared when no
+# Firefox holds that profile.
 manual_profile_prefs() {
-  mkdir -p "$CFG/firefox-manual"
-  grep -qs 'loadDivertedInBackground' "$CFG/firefox-manual/user.js" 2>/dev/null ||
-    echo 'user_pref("browser.tabs.loadDivertedInBackground", true);' >> "$CFG/firefox-manual/user.js"
+  local d; d="$(manual_profile_dir)"
+  mkdir -p "$d" 2>/dev/null || true
+  if [ "$d" != "$CFG/firefox-manual" ] && [ ! -f "$d/user.js" ] && [ -f "$CFG/firefox-manual/user.js" ]; then
+    cp "$CFG/firefox-manual/user.js" "$d/user.js" 2>/dev/null || true
+  fi
+  grep -qs 'loadDivertedInBackground' "$d/user.js" 2>/dev/null ||
+    echo 'user_pref("browser.tabs.loadDivertedInBackground", true);' >> "$d/user.js"
+  if ! pgrep -f -- "--profile $d" >/dev/null 2>&1; then rm -f "$d/lock" "$d/.parentlock" 2>/dev/null || true; fi
+}
+launch_manual_firefox() {   # the manual's own Firefox instance (fixed X class + the profile); extra args pass through
+  local prof; prof="$(manual_profile_dir)"
+  (firefox --class don-manual --profile "$prof" "$@" >/dev/null 2>&1 &)
+}
+# ---- did the manual's browser window actually appear? ----
+# A Firefox that cannot load its profile (the snap confinement case) exits quietly: no window, no message.
+# Look for the window with xdotool / wmctrl / i3; retry once as a plain `firefox <url>`; then tell the
+# student the URL. Codes: 0 window found, 1 nothing found, 2 cannot tell (no display or no tool), 3 the plain retry opened it.
+manual_window_up() {   # $1 = X class pattern (extended regex, case-insensitive)
+  local cls="${1:-don-manual}"
+  [ -n "${DISPLAY:-}" ] || return 2
+  if command -v xdotool >/dev/null 2>&1; then xdotool search --class "$cls" 2>/dev/null | grep -q . && return 0; return 1; fi
+  if command -v wmctrl >/dev/null 2>&1; then wmctrl -lx 2>/dev/null | grep -qiE "$cls" && return 0; return 1; fi
+  if command -v i3-msg >/dev/null 2>&1 && i3-msg -t get_tree >/dev/null 2>&1; then
+    i3-msg -t get_tree 2>/dev/null | grep -qiE "\"class\":\"[^\"]*($cls)" && return 0; return 1
+  fi
+  return 2
+}
+wait_manual_window() {   # $1 = class pattern, $2 = seconds (checks twice a second)
+  local i rc n=$(( ${2:-15} * 2 ))
+  [ "$n" -ge 1 ] || n=1
+  for i in $(seq 1 "$n"); do manual_window_up "$1"; rc=$?; [ "$rc" -ne 1 ] && return "$rc"; sleep 0.5; done
+  return 1
+}
+confirm_manual_window() {   # $1 = url, $2 = class pattern, $3 = seconds to wait, $4 = "noretry" to skip the plain retry
+  local url="$1" cls="${2:-don-manual}" secs="${3:-15}" rc
+  [ -z "${DONLAB_NO_MANUAL_CHECK:-}" ] || return 0
+  wait_manual_window "$cls" "$secs"; rc=$?
+  [ "$rc" -eq 1 ] || return "$rc"
+  if [ "${4:-}" != noretry ] && command -v firefox >/dev/null 2>&1; then
+    echo "donlab: the manual window did not appear within ${secs}s; opening it in your usual Firefox instead."
+    (firefox "$url" >/dev/null 2>&1 &)
+    wait_manual_window 'firefox|navigator' 15; rc=$?
+    [ "$rc" -eq 1 ] || return 3
+  fi
+  echo "donlab: no browser window opened for the manual. The lab itself is running; open the manual by hand:"
+  echo "        in a browser on this VM go to  $url   (or from a terminal:  firefox $url )"
+  return 1
 }
 
 # ---- open the lab manual (prefer the bridge -> live buttons; fall back to file://) ----
 open_manual() {
-  local url b frms="" m="$LTDIR/labs/$LAB/docs/$LAB.html"
+  local url b rc frms="" m="$LTDIR/labs/$LAB/docs/$LAB.html"
   if start_bridge; then
     url="http://127.0.0.1:$BRIDGE_PORT/$LAB.html"
     echo "donlab: manual + live Check Work / Stop Lab at $url"
@@ -1450,9 +1782,12 @@ open_manual() {
       fi
     fi
   else
-    [ -f "$m" ] || return 0
+    [ -f "$m" ] || { echo "donlab: the manual for $LAB is not installed at $m (re-run the imodule install, or ask the instructor)."; return 0; }
     url="file://$m"
     echo "donlab: manual opened read-only (bridge unavailable; the live buttons need it)"
+    if ! command -v python3 >/dev/null 2>&1; then echo "        reason: python3 is not installed (sudo apt-get install -y python3)"
+    elif ! command -v curl >/dev/null 2>&1; then echo "        reason: curl is not installed (sudo apt-get install -y curl)"
+    elif [ -s "$CFG/lab-bridge.out" ]; then echo "        bridge log: $(tail -n 1 "$CFG/lab-bridge.out" 2>/dev/null | cut -c1-140)"; fi
   fi
   # CI/headless: the manual and FRMS servers are up (so they can be checked); never open a browser
   [ -n "${DONLAB_NO_MANUAL:-}" ] && return 0
@@ -1463,10 +1798,16 @@ open_manual() {
   if [ "$(detect_desktop)" = i3 ] && command -v firefox >/dev/null 2>&1 && command -v i3-msg >/dev/null 2>&1 && [ -z "${DONLAB_NO_LAYOUT:-}" ]; then
     i3-msg 'mark --replace lab-terminal, split h' >/dev/null 2>&1 || true
     manual_profile_prefs
-    (firefox --class don-manual --profile "$CFG/firefox-manual" "$url" >/dev/null 2>&1 &)
+    launch_manual_firefox "$url"
     i3_layout_manual
+    # i3_layout_manual already waited up to 20 s for the window: a short confirmation, then the plain retry
+    confirm_manual_window "$url" don-manual 45; rc=$?   # a snap Firefox cold start on a slow VM can take 30-60 s; a premature plain retry would open a second window
     # the manual window is up: add FRMS as a background tab in the same window
-    [ -n "$frms" ] && (firefox --class don-manual --profile "$CFG/firefox-manual" -new-tab "$frms" >/dev/null 2>&1 &)
+    case "$rc" in
+      3) [ -n "$frms" ] && (firefox -new-tab "$frms" >/dev/null 2>&1 &) ;;
+      1) ;;
+      *) [ -n "$frms" ] && launch_manual_firefox -new-tab "$frms" ;;
+    esac
     return 0
   fi
   for b in firefox firefox-esr x-www-browser xdg-open; do
@@ -1474,9 +1815,11 @@ open_manual() {
       # other desktops: open FRMS first, then the manual as the newest (so active) tab
       if [ -n "$frms" ]; then ("$b" "$frms" >/dev/null 2>&1 &); sleep 3; ("$b" "$url" >/dev/null 2>&1 &)
       else ("$b" "$url" >/dev/null 2>&1 &); fi
+      case "$b" in firefox*) confirm_manual_window "$url" 'firefox|navigator' 15 noretry ;; esac
       return 0
     fi
   done
+  echo "donlab: no browser found on this VM (firefox / x-www-browser / xdg-open). Open the manual by hand:  $url"
 }
 i3_layout_manual() {   # wait for the manual window, put it top right, hand focus back to the terminal
   local i
@@ -1491,7 +1834,7 @@ i3_layout_manual() {   # wait for the manual window, put it top right, hand focu
 lab_tmux() {
   local SC="$LTDIR/labs/$LAB/config/start.config"
   [ -f "$SC" ] || { echo "no start.config for '$LAB' -- terminals not laid out."; return 1; }
-  command -v tmux >/dev/null 2>&1 || return 1
+  command -v tmux >/dev/null 2>&1 || { tmux_fallback "tmux is not installed"; return 1; }
   local SESSION="lab-$LAB"
   tmux kill-session -t "$SESSION" 2>/dev/null || true
   local running; running=$(docker ps --format '{{.Names}}')
@@ -1507,16 +1850,22 @@ lab_tmux() {
     n="${TERMS[$c]}"; [ "$n" = "0" ] && continue; [ "$n" = "-1" ] && continue   # hidden host
     full="$LAB.$c.student"
     grep -qx "$full" <<<"$running" || continue                                    # not running
-    cmd="docker exec -it $full bash -l"
-    if [ "$made" = 0 ]; then tmux new-session -d -s "$SESSION" -n "$c" "$cmd"
-    else                     tmux new-window  -t "$SESSION"    -n "$c" "$cmd"; fi
+    # A sane TERM INTO the container shell: tmux's own terminal type is not guaranteed to have terminfo in
+    # every image, xterm-256color is -- so a pane never garbles or prints "TERM environment variable not set".
+    cmd="docker exec -it -e TERM=xterm-256color $full bash -l"
+    if [ "$made" = 0 ]; then
+      tmux new-session -d -s "$SESSION" -n "$c" "$cmd" 2>/dev/null || { tmux_fallback "tmux could not start a session"; return 1; }
+    else
+      tmux new-window -t "$SESSION" -n "$c" "$cmd" 2>/dev/null || true
+    fi
     for ((p=1; p<n; p++)); do
-      tmux split-window -t "$SESSION:$c" "$cmd"
-      tmux select-layout -t "$SESSION:$c" tiled >/dev/null
+      tmux split-window -t "$SESSION:$c" "$cmd" 2>/dev/null || true
+      tmux select-layout -t "$SESSION:$c" tiled >/dev/null 2>&1 || true
     done
     made=$((made+1))
   done
   [ "$made" -gt 0 ] || { echo "no visible terminals for '$LAB' -- is it running?"; return 1; }
+  tmux set -t "$SESSION" default-terminal "screen-256color" >/dev/null 2>&1 || true   # terminfo every host has
   tmux set -t "$SESSION" mouse on >/dev/null 2>&1 || true
   # vi keys everywhere (course rule): copy-mode/scrollback navigation with hjkl / / ? / v / y, and
   # vi editing on the tmux command prompt; the mouse stays on for selection and pane focus.
@@ -1548,14 +1897,42 @@ lab_tmux() {
   tmux bind-key '%'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -h \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
   tmux bind-key '"'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -v \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
   tmux select-window -t "$SESSION":0 >/dev/null 2>&1 || true
+  # Self-check: the panes must hold a LIVE shell inside a container. A docker exec that died on the spot
+  # leaves an empty, instantly-closing window -- the "tmux didn't work" report. Only fall back when we
+  # positively see panes and every one of them is dead (an old tmux that cannot list them is left alone).
+  sleep 1
+  local total alive
+  total=$(tmux list-panes -s -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | grep -c . || true)
+  alive=$(tmux list-panes -s -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | grep -c '^0$' || true)
+  if [ "${total:-0}" -gt 0 ] && [ "${alive:-0}" -eq 0 ]; then
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux_fallback "the lab shells did not come up inside tmux"; return 1
+  fi
+  [ -n "${DONLAB_TMUX_CHECK:-}" ] && { echo "TMUX-CHECK OK: session $SESSION, panes alive=$alive/$total"; return 0; }
   echo "tmux '$SESSION': Ctrl-b n/p = next/prev host, Ctrl-b w = pick a host,"
   echo "                 Ctrl-b % or \" = split into panes, Ctrl-b d = detach (lab keeps running)."
   if [ -t 0 ] && [ -t 1 ]; then
     if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$SESSION"; else exec tmux attach -t "$SESSION"; fi
-  else
-    echo "not a terminal -- attach with: tmux attach -t $SESSION"
   fi
+  # Not on a terminal (launched from a desktop icon, a launcher or a wrapper): open the desktop's own
+  # terminal emulator attached to the session, so the student still gets the tmux view.
+  if [ -n "${DISPLAY:-}" ] && open_terminal_with "DoN Range: $LAB" tmux attach -t "$SESSION"; then
+    echo "donlab: opened a terminal attached to tmux '$SESSION' (re-attach any time: tmux attach -t $SESSION)."
+  else
+    echo "donlab: not on a terminal -- attach with: tmux attach -t $SESSION"
+    tmux_fallback "no terminal window could be opened for tmux"
+  fi
+  return 0
 }
+# --tmux-check <lab>: self-test used by the smoke battery (and by hand). The lab must already be running;
+# lay out the tmux session, verify its panes hold live container shells, report, and exit -- no attach,
+# no start, no image refresh, no desktop switch.
+if [ "${TMUX_CHECK:-0}" = 1 ]; then
+  docker ps --format '{{.Names}}' | grep -q "^$LAB\." || { echo "TMUX-CHECK FAIL: $LAB is not running"; exit 1; }
+  command -v tmux >/dev/null 2>&1 || { echo "TMUX-CHECK FAIL: tmux is not installed"; exit 1; }
+  DONLAB_TMUX_CHECK=1 lab_tmux && exit 0
+  echo "TMUX-CHECK FAIL: tmux layout did not come up (see above)"; exit 1
+fi
 
 # ---- start the lab, self-healing a common failure: a leftover Docker network (or a
 #      not-fully-stopped previous lab) with an overlapping subnet blocks the start, so no
