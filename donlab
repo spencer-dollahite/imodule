@@ -56,7 +56,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 #         held :5173 names the holder and moves the manual to the next free port (5175..5190), and
 #         the doctor gains platform checks (Wayland, hypervisor tips, GL, /dev/shm, clock, snap, xhost);
 #         `donlab --doctor` no longer dies with "CFG: unbound variable" on a non-i3 desktop.
-# 1.4.17: a /tmp/imodule.tar left by another user no longer blocks the lab-bundle install (fresh-install battery).
+# 1.4.17: /tmp/imodule.tar or /tmp/labtainers/ left by another user no longer block the bundle install / lab start (fresh-install battery).
 DONLAB_VERSION='1.4.17'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
@@ -263,19 +263,23 @@ has_graphical_seat() {
   return 1
 }
 
-# ---- the framework's bundle installer writes a FIXED temp path: /tmp/imodule.tar ---------------
-# A copy left there by another user (a run under sudo, a second account on the VM, a CI runner's own
-# user) is not writable by this one, and bin/imodule dies with PermissionError before installing
-# anything (fresh-install battery, arm64, 2026-10-03). Clear it: ours -> rm; someone else's -> sudo rm,
-# saying why. DONLAB_IMODULE_TMP exists for the test harness.
-clear_stale_imodule_tmp() {
-  local f="${DONLAB_IMODULE_TMP:-/tmp/imodule.tar}"
+# ---- fixed /tmp paths the framework writes: /tmp/imodule.tar and /tmp/labtainers/ ------------------
+# bin/imodule copies the bundle to /tmp/imodule.tar; start.py stages each container's labsys.tar under
+# /tmp/labtainers/<container>/. Either, left by ANOTHER user (a run under sudo, a second account on the VM,
+# a CI runner's own user), is not writable by this one: the bundle install dies with PermissionError and
+# the lab start with "tar failure" (fresh-install battery, 2026-10-03/04). Clear them: ours -> rm;
+# someone else's -> sudo rm, saying why. DONLAB_IMODULE_TMP / DONLAB_LABTAINERS_TMP exist for the test harness.
+clear_stale_tmp_path() {   # <path>: 0 when it is gone or usable by us
+  local f="$1"
   [ -e "$f" ] || return 0
-  rm -f "$f" 2>/dev/null && return 0
-  [ "$(id -u)" -eq 0 ] && { echo "donlab: could not remove $f"; return 0; }
-  echo "donlab: $f was left by another user (a run under sudo?) and blocks the lab installer; removing it with sudo."
-  sudo -n rm -f "$f" 2>/dev/null || sudo rm -f "$f" || echo "donlab: could not remove $f -- run:  sudo rm -f $f  and start donlab again."
+  if [ -d "$f" ]; then [ -w "$f" ] && [ -O "$f" ] && return 0; rm -rf "$f" 2>/dev/null && return 0
+  else rm -f "$f" 2>/dev/null && return 0; fi
+  [ "$(id -u)" -eq 0 ] && { echo "donlab: could not remove $f"; return 1; }
+  echo "donlab: $f was left by another user (a run under sudo?) and would block the lab; removing it with sudo."
+  sudo -n rm -rf "$f" 2>/dev/null || sudo rm -rf "$f" || { echo "donlab: could not remove $f -- run:  sudo rm -rf $f  and start donlab again."; return 1; }
 }
+clear_stale_imodule_tmp() { clear_stale_tmp_path "${DONLAB_IMODULE_TMP:-/tmp/imodule.tar}"; }
+clear_stale_labtainers_tmp() { clear_stale_tmp_path "${DONLAB_LABTAINERS_TMP:-/tmp/labtainers}"; }
 
 # ---- make sure the lab helpers (tmux + vim + flameshot) are present -----------------------
 # tmux: without it the framework opens a pop-up terminal per container; tmux keeps every host in
@@ -1950,6 +1954,7 @@ if [ "${TMUX_CHECK:-0}" = 1 ]; then
   echo "TMUX-CHECK FAIL: tmux layout did not come up (see above)"; exit 1
 fi
 
+clear_stale_labtainers_tmp   # another user's /tmp/labtainers/ makes start.py's tar staging fail
 # ---- start the lab, self-healing a common failure: a leftover Docker network (or a
 #      not-fully-stopped previous lab) with an overlapping subnet blocks the start, so no
 #      containers come up. Detect the framework's cleanup hint, clear it, and retry once. ----
