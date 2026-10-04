@@ -57,7 +57,9 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 #         the doctor gains platform checks (Wayland, hypervisor tips, GL, /dev/shm, clock, snap, xhost);
 #         `donlab --doctor` no longer dies with "CFG: unbound variable" on a non-i3 desktop.
 # 1.4.17: /tmp/imodule.tar or /tmp/labtainers/ left by another user no longer block the bundle install / lab start (fresh-install battery).
-DONLAB_VERSION='1.4.17'
+# 1.4.18: a locally built image under the framework's plain name no longer shadows the registry's (lab2 FRMS layer missing on a dev box);
+#         inside tmux, donlab switches only its own client to the lab session (never someone else's terminal).
+DONLAB_VERSION='1.4.18'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -1538,6 +1540,15 @@ refresh_images() {
       if [ -n "$before" ] && [ "$before" != "$after" ]; then echo "      -> updated"; changed+=("$c")
       elif [ -z "$before" ]; then echo "      -> downloaded"
       else echo "      -> up to date"; fi
+      # A locally BUILT image under the framework's plain name (a dev box after rebuild, a student who once ran
+      # the framework's rebuild) shadows the registry's: start.py runs the plain name whenever it exists, so the
+      # lab comes up from a stale build (prod walkthrough 2026-10-04: lab2's hi-web01 without its FRMS layer).
+      # Point the plain name at the registry image; the instance is then reset like any other update.
+      plain="$LAB.$c.student"; pid="$(docker images -q "$plain:latest" 2>/dev/null | head -1)"
+      if [ -n "$pid" ] && [ -n "$after" ] && [ "$pid" != "$after" ]; then
+        docker tag "$img:latest" "$plain:latest" 2>/dev/null \
+          && { echo "      -> a locally built image was shadowing the registry's; the registry image now runs"; changed+=("$c"); }
+      fi
     done
   fi
   prefetch_grader
@@ -1932,7 +1943,15 @@ lab_tmux() {
   echo "tmux '$SESSION': Ctrl-b n/p = next/prev host, Ctrl-b w = pick a host,"
   echo "                 Ctrl-b % or \" = split into panes, Ctrl-b d = detach (lab keeps running)."
   if [ -t 0 ] && [ -t 1 ]; then
-    if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$SESSION"; else exec tmux attach -t "$SESSION"; fi
+    if [ -n "${TMUX:-}" ]; then
+      # Inside tmux already: switch ONLY the client that is looking at this pane. A bare `switch-client` with no
+      # client of its own (donlab run from a detached session, e.g. by a harness) takes over whichever client tmux
+      # picks -- the owner's own terminal, 2026-10-04. No client here -> leave everyone alone, print the hint.
+      local cl; cl="$(tmux display-message -p -t "${TMUX_PANE:-}" '#{client_tty}' 2>/dev/null)"
+      if [ -n "$cl" ]; then exec tmux switch-client -c "$cl" -t "$SESSION"; fi
+      echo "donlab: the lab's tmux session is ready -- attach with:  tmux attach -t $SESSION"; return 0
+    fi
+    exec tmux attach -t "$SESSION"
   fi
   # Not on a terminal (launched from a desktop icon, a launcher or a wrapper): open the desktop's own
   # terminal emulator attached to the session, so the student still gets the tmux view.
