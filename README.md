@@ -262,7 +262,24 @@ Use `cs3600`, `cs3670` or `cs3690` to match your course, and paste the key exact
 instructor provided it. If you are enrolled in more than one of these courses, install each
 key with its own `--key` line. Re-run the command at any time to replace a key.
 
-### 4.3 Start a lab
+### 4.3 Set up the VM once: `./donlab --init`
+
+Run this once after the key is installed. It prepares the generic lab environment for any
+course: the helpers the labs assume (tmux, vim, flameshot, xclip, xdotool), Firefox on the
+VM, the `cdlab` shortcut, the e-mail address the labs record (optional here; a lab asks
+later if you skip it), cgroup v2 if the appliance boots the older layout, and the i3 tiling
+desktop as your login session. It then reboots the VM once.
+
+```bash
+./donlab --init
+```
+
+After the reboot, log in as usual. The i3 quick-start window opens in the Labtainers
+student directory with the key bindings, and finishes with the environment check
+(`donlab --check`). Starting a lab after that needs no further setup, prompts or reboots.
+`./donlab --init` is safe to run again at any time.
+
+### 4.4 Start a lab
 
 ```bash
 ./donlab cs3670-lab1
@@ -304,7 +321,7 @@ The first start, showing the bundle download and installation followed by the im
 shown in the second image has been replaced with the appliance path
 (`/home/student/labtainer/trunk/labs/<lab>/docs/<lab>.html`).*
 
-### 4.4 The manual
+### 4.5 The manual
 
 Firefox opens the manual for the lab. The sidebar tracks your progress; **Bearings** holds
 the scenario's credentials and hosts; **Actions** runs Check Work, Stop Lab and Reset Lab
@@ -315,7 +332,7 @@ the PDF you submit.
 
 ![The Actions menu of the manual: Check Work, Stop Lab, Reset Lab](docs/img/manual-actions-menu.png)
 
-### 4.5 The tmux layout
+### 4.6 The tmux layout
 
 The launcher lays the lab out in one tmux session, one window per host, named after the
 host. The status line at the bottom lists the windows:
@@ -325,7 +342,7 @@ host. The status line at the bottom lists the windows:
 The tmux keys and the i3 desktop are covered in the FAQ at the bottom of every lab manual.
 Prefer the framework's separate pop-up terminal windows? Run `./donlab <lab> --no-tmux`.
 
-### 4.6 Stop the lab and submit
+### 4.7 Stop the lab and submit
 
 Stop the lab from the workspace directory, or with **Actions > Stop Lab** in the manual:
 
@@ -345,7 +362,7 @@ instructor by the route given in your course instructions.
 `checkwork <lab>` shows how the graded goals are scoring while the lab runs. To discard your
 work and start the lab from scratch: `./donlab <lab> -r`.
 
-### 4.7 Other launcher commands
+### 4.8 Other launcher commands
 
 | Command | Effect |
 |---|---|
