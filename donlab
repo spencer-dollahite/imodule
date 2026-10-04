@@ -56,7 +56,8 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 #         held :5173 names the holder and moves the manual to the next free port (5175..5190), and
 #         the doctor gains platform checks (Wayland, hypervisor tips, GL, /dev/shm, clock, snap, xhost);
 #         `donlab --doctor` no longer dies with "CFG: unbound variable" on a non-i3 desktop.
-DONLAB_VERSION='1.4.16'
+# 1.4.17: a /tmp/imodule.tar left by another user no longer blocks the lab-bundle install (fresh-install battery).
+DONLAB_VERSION='1.4.17'
 usage() {
   echo "usage: donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
@@ -260,6 +261,20 @@ has_graphical_seat() {
   pgrep -x 'gdm3|gdm|lightdm|sddm|lxdm|Xorg|Xwayland' >/dev/null 2>&1 && return 0
   systemctl is-active -q display-manager.service 2>/dev/null && return 0
   return 1
+}
+
+# ---- the framework's bundle installer writes a FIXED temp path: /tmp/imodule.tar ---------------
+# A copy left there by another user (a run under sudo, a second account on the VM, a CI runner's own
+# user) is not writable by this one, and bin/imodule dies with PermissionError before installing
+# anything (fresh-install battery, arm64, 2026-10-03). Clear it: ours -> rm; someone else's -> sudo rm,
+# saying why. DONLAB_IMODULE_TMP exists for the test harness.
+clear_stale_imodule_tmp() {
+  local f="${DONLAB_IMODULE_TMP:-/tmp/imodule.tar}"
+  [ -e "$f" ] || return 0
+  rm -f "$f" 2>/dev/null && return 0
+  [ "$(id -u)" -eq 0 ] && { echo "donlab: could not remove $f"; return 0; }
+  echo "donlab: $f was left by another user (a run under sudo?) and blocks the lab installer; removing it with sudo."
+  sudo -n rm -f "$f" 2>/dev/null || sudo rm -f "$f" || echo "donlab: could not remove $f -- run:  sudo rm -f $f  and start donlab again."
 }
 
 # ---- make sure the lab helpers (tmux + vim + flameshot) are present -----------------------
@@ -1378,6 +1393,7 @@ if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
         # Older appliance releases of imodule open ~/.local/share/labtainers/imodules.txt for
         # append WITHOUT creating the directory (FileNotFoundError on a fresh box). Pre-create it.
         mkdir -p "$HOME/.local/share/labtainers" 2>/dev/null || true
+        clear_stale_imodule_tmp
         if [ -x "$IMOD" ] && run_step "Installing labs" "$IMOD" "file://$TMP/imodule.tar"; then
           [ -n "$remote_sha" ] && printf '%s' "$remote_sha" > "$CFG/installed-$COURSE.sha256"
           step "Lab bundle installed."
