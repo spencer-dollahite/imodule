@@ -277,7 +277,9 @@ desktop as your login session. It then reboots the VM once.
 After the reboot, log in as usual. The i3 quick-start window opens in the Labtainers
 student directory with the key bindings, and finishes with the environment check
 (`donlab --check`). Starting a lab after that needs no further setup, prompts or reboots.
-`./donlab --init` is safe to run again at any time.
+`--init` also puts `donlab` on your PATH, so from then on `donlab cs3670-lab1` works from
+any directory (the examples below keep the `./` form, which works too). `./donlab --init`
+is safe to run again at any time.
 
 ### 4.4 Start a lab
 
