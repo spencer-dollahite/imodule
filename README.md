@@ -70,6 +70,23 @@ VirtualBox:
 *The screenshots show VirtualBox 7.1 importing our arm64 `.ova`; the NPS x86_64 file goes
 through the same dialogs.*
 
+**Windows 11 hosts (VirtualBox).** A few settings make the lab desktop and its browsers
+behave; set them with the VM powered off, under **Settings > Display**:
+
+- **Graphics Controller: VMSVGA** (Oracle's default for Linux guests), **Video Memory:
+  128 MB**, **3D Acceleration: off**. With 3D on, Firefox inside the lab containers has opened
+  no window on some machines.
+- Run `./donlab` from a terminal **on the VM's own desktop**, not over ssh from Windows: the
+  lab's browsers need the VM's screen.
+- The first `donlab` launch installs a few helpers and may reboot the VM once into the i3
+  desktop the labs use; that is expected.
+
+There are many variables (VirtualBox version, Windows graphics driver, whether Hyper-V or
+Core Isolation is enabled on the host), so you may have to try a couple of combinations on
+your own machine to find the one that works. If the VM feels very slow and shows a green
+turtle icon in its status bar, Hyper-V is active on the Windows host and VirtualBox is running
+in its slower compatibility mode; the VirtualBox manual describes how to turn that off.
+
 VMware (Workstation, Player or Fusion):
 
 1. Install VMware Workstation, Player or Fusion.
