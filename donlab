@@ -8,6 +8,7 @@
 #   terminal that host was given -- and opens the lab manual in Firefox. This works
 #   over plain SSH with no pop-up windows to arrange.
 #     Ctrl-b n / p  next / previous host      Ctrl-b w   pick a host from a list
+#     Ctrl-b 0-9    jump to a host by its number
 #     Ctrl-b % or " split the current host into more panes
 #     Ctrl-b d      detach (the lab keeps running; re-attach with: tmux attach -t lab-<lab>)
 #   Stop the lab with:  stoplab <lab>
@@ -64,7 +65,7 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 #         the manual's report export takes the e-mail the student gave the framework (bridge /api/email), no second prompt.
 # 1.4.20: `donlab --init` -- the generic environment once (helpers, Firefox, i3, cgroup v2, e-mail, donlab on PATH), ONE reboot, then the
 #         i3 quick start finishes with `donlab --check` in the student directory.
-DONLAB_VERSION='1.4.20'
+DONLAB_VERSION='1.4.21'
 usage() {
   echo "usage: donlab --init           # once per VM: helpers, Firefox, i3, one reboot, then the check"
   echo "       donlab <labname> [--no-tmux] [labtainer args...]"
@@ -542,6 +543,7 @@ i3_cheatsheet() {
     Super+1 .. 4   switch workspace        Super+Shift+1..4  send window to workspace
     Super+r        resize mode (arrows, Esc)   drag a border with the mouse also resizes
     Ctrl-b w       inside a lab: pick a host from tmux's window list
+    Ctrl-b 0-9     inside a lab: jump to a host by its number
 
   Start a lab:     donlab <labname>      (this shell is already in the Labtainers student dir)
   Get back here:   cdlab
@@ -600,6 +602,7 @@ cat <<'TXT'
     Super+1 .. 4   switch workspace        Super+Shift+1..4  send window to workspace
     Super+r        resize mode (arrows, Esc)   drag a border with the mouse also resizes
     Ctrl-b w       inside a lab: pick a host from tmux's window list
+    Ctrl-b 0-9     inside a lab: jump to a host by its number
 
   Start a lab:     donlab <labname>      (this shell is already in the Labtainers student dir)
   Get back here:   cdlab
