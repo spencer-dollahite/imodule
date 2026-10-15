@@ -79,7 +79,7 @@ your machine's CPU architecture, virtualized natively.
 
 VirtualBox and UTM need **no account**. **VMware** Workstation (Windows/Linux) and Fusion (Mac)
 are free but require creating a **Broadcom account** to download; the appliance imports the same
-way. On **Apple Silicon, VirtualBox is the recommended choice.**
+way. **VirtualBox is the recommended choice.**
 
 > **Emulation is a last resort — only if no native appliance works.** On an Apple-Silicon Mac it
 > means running the **official NPS x86 appliance** under x86 emulation (the NPS page's **x86_64
