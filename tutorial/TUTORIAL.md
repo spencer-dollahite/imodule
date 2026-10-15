@@ -2,7 +2,7 @@
 
 **From nothing to running your first lab (CS3670 Lab 1) and using it.**
 
-This walkthrough is also the storyboard for the onboarding video (see `STORYBOARD.md`). It has two
+This walkthrough is also the basis for the onboarding video. It has two
 halves: a **setup preamble** that differs by computer, and a shared **Core** that is the same for
 everyone.
 
