@@ -1,440 +1,537 @@
-# DoN Range labs for Labtainers: student setup guide
+# DoN Range labs for Labtainers: the one-stop student guide
 
 This repository is the distribution point for the instructor-provided Labtainers module
 (the "imodule") and the `donlab` launcher used by the DoN Range lab family for CS3600,
 CS3670 and CS3690. The launcher fetches what it needs from here at every lab start.
 Students do not need to clone this repository.
 
-The sections below take you from nothing installed to a running lab.
+This single page takes you from nothing installed to a finished, submitted lab, with
+screenshots and short autoplaying clips at each step.
 
-> **📺 Prefer a guided walkthrough?** A full illustrated, dark-themed tutorial — from nothing installed through installing your hypervisor, getting the appliance, `donlab`, your first lab, and exporting/submitting the Lab Report — is in [`tutorial/`](tutorial/): open **`tutorial/index.html`** for the step-by-step with screenshots, or **`tutorial/vid.html`** to watch the video version.
+> **📺 Prefer the interactive / video version?** The same walkthrough as a click-through page
+> and a narrated video is in [`tutorial/`](tutorial/): open **`tutorial/index.html`** for the
+> step-by-step with screenshots, or **`tutorial/vid.html`** to watch it
+> ([`tutorial/clips/vid-core.mp4`](tutorial/clips/vid-core.mp4) is the core walkthrough).
 
-1. [Which image do I use?](#1-which-image-do-i-use)
-2. [Get a Labtainers VM running](#2-get-a-labtainers-vm-running)
-3. [First boot: verify that Labtainers works](#3-first-boot-verify-that-labtainers-works)
-4. [Running a lab with the donlab launcher](#4-running-a-lab-with-the-donlab-launcher)
-5. [Troubleshooting](#5-troubleshooting)
+## Contents
+1. [What you need before you start](#1-what-you-need-before-you-start)
+2. [Specs: minimum vs recommended](#2-specs-minimum-vs-recommended)
+3. [Which image and hypervisor?](#3-which-image-and-hypervisor)
+4. [Setup A — x86 (Windows / Linux / Intel Mac)](#4-setup-a--x86-windows--linux--intel-mac)
+5. [Setup B — Apple-Silicon Mac (arm64)](#5-setup-b--apple-silicon-mac-arm64)
+6. [Run your first lab (the same on every platform)](#6-run-your-first-lab-the-same-on-every-platform)
+7. [Troubleshooting / FAQ](#7-troubleshooting--faq)
+8. [Lab ids and next steps](#8-lab-ids-and-next-steps)
 
-## 1. Which image do I use?
+---
 
-Labtainers runs inside a Linux virtual machine. Pick the image that matches your hardware.
+## 1. What you need before you start
 
-| Your computer | Image to use | Where it comes from |
+From your instructor:
+
+- **The appliance download.** For **x86-64** machines it is the official **NPS
+  virtual-machine-images page**; for an **Apple-Silicon Mac** it is the **OneDrive folder**
+  (links in [section 3](#3-which-image-and-hypervisor)).
+- **Your VM login** (the student account inside the appliance).
+- **Your `cs3670` course key** (also `cs3600` / `cs3690` if you take those). It unlocks the
+  course's labs; you install it once (see [section 6](#6-run-your-first-lab-the-same-on-every-platform)).
+
+On the host side: a **64-bit** operating system, and — on an **Intel/AMD PC or Intel Mac** —
+**CPU virtualization** (Intel VT-x / AMD-V) enabled in BIOS/UEFI. It is on by default on most
+machines; without it the VM will not start. **Apple-Silicon Macs need no such setting.**
+
+**What's next:** check your machine against the specs below, then jump to your setup —
+[Setup A](#4-setup-a--x86-windows--linux--intel-mac) for x86, or
+[Setup B](#5-setup-b--apple-silicon-mac-arm64) for Apple Silicon.
+
+---
+
+## 2. Specs: minimum vs recommended
+
+| Resource | Minimum | Recommended |
 |---|---|---|
-| Windows or Linux on an Intel or AMD processor; Intel-based Mac | The official NPS x86_64 appliance (VirtualBox or VMware) | [NPS virtual machine images](https://nps.edu/web/c3o/virtual-machine-images) |
-| Apple Silicon Mac (M1, M2, M3, M4) | Our native arm64 appliance for UTM (also provided as `.qcow2` and `.ova`) | The OneDrive folder linked from [Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac) |
-| Windows with Hyper-V | The VHDX image listed on the NPS page (marked as work in progress there) | [NPS virtual machine images](https://nps.edu/web/c3o/virtual-machine-images) |
-| A machine that cannot meet the requirements (low memory, no virtualization support) | A Labtainers cloud VM, accessed from a browser | Section 5, "Cloud Labtainers", of the [Labtainers Student Guide](https://github.com/mfthomps/Labtainers/raw/master/docs/student/labtainer-student.pdf) |
+| Host OS | 64-bit Windows 10/11, macOS, or Linux (current release) | — |
+| Host RAM | 16 GB (the VM uses 8 GB) | 16 GB+ (scales with what you allot the guest) |
+| Guest RAM | 8 GB | 8 GB+ (raise it only if your host can spare it) |
+| Guest vCPU | 2 | 4+ (more if you have the cores) |
+| Free host disk | ~80 GB | ~120 GB+ |
 
-Apple Silicon note: the NPS page also offers an x86_64 QCOW2 image that UTM can run under
-emulation. It runs every Labtainers lab, but slowly. The native arm64 appliance is the
-recommended route for this course; the labs are published for arm64. The
-[Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac) guide covers both
-routes in detail.
+The "+" means *this or more, as long as you don't starve the host OS*. The guest VM ships at
+**8 GB RAM / 60 GB virtual disk**; the virtual disk grows as labs run and pull images, and the
+~5 GB download plus the import need headroom, which is why ~80 GB free is the floor.
 
-## 2. Get a Labtainers VM running
+These numbers are a general baseline, not a one-size-fits-all guarantee; they will not be ideal
+for every hardware and hypervisor combination. Feel free to adjust the VM's vCPU, RAM and disk,
+and other hypervisor settings — **display/graphics in particular**, along with clipboard and
+networking — to suit your machine and smooth out performance. There are too many combinations to
+list here, so it is worth experimenting a little and doing some of your own research to settle on
+a good setup.
 
-### 2a. The official NPS appliance (x86_64: VirtualBox, VMware)
+---
 
-The images, their checksums and brief import instructions are published at
-[nps.edu/web/c3o/virtual-machine-images](https://nps.edu/web/c3o/virtual-machine-images).
-The [Labtainers page](https://nps.edu/web/c3o/labtainers) links the Student Guide, the
-lab manuals and a video tutorial on installation. A full DoN Range walkthrough with video is in [`tutorial/`](tutorial/) (watch `tutorial/vid.html`).
+## 3. Which image and hypervisor?
 
-VirtualBox:
+Labtainers runs inside a Linux virtual machine. **Native-first:** run the appliance that matches
+your machine's CPU architecture, virtualized natively.
 
-1. Install VirtualBox from [virtualbox.org](https://www.virtualbox.org/wiki/Downloads).
-2. Download the VirtualBox appliance (`LabtainerVM24a-VirutalBox.ova` at the time of
-   writing; the file name is spelled that way on the NPS page).
-3. Compare the file's SHA-256 checksum with the value on the NPS page.
-4. In VirtualBox choose **File > Import Appliance** (the **Import** toolbar button does the
-   same).
+| Your machine | Hypervisors | Appliance (source) |
+|---|---|---|
+| Windows / Linux PC (x86-64) | **VirtualBox** or **VMware Workstation** | x86_64 `.ova` — [NPS page](https://nps.edu/web/c3o/virtual-machine-images) |
+| **Intel Mac** (x86-64, native) | **VirtualBox** or **VMware Fusion** | x86_64 `.ova` — [NPS page](https://nps.edu/web/c3o/virtual-machine-images) |
+| Apple-Silicon Mac (arm64) | **VirtualBox (preferred)**, **VMware Fusion**, or **UTM** | arm64 `.ova` (VirtualBox / Fusion) or `.utm.zip` (UTM) — [OneDrive](https://nps01-my.sharepoint.com/:f:/g/personal/spencer_dollahite_nps_edu/IgAZgs-majINRZLvHu-oPPj0AQei1zJ9S0xHeJThBPQamjE) |
+| Windows with Hyper-V | the VHDX image on the NPS page (work in progress there) | [NPS page](https://nps.edu/web/c3o/virtual-machine-images) |
+| A machine that cannot meet the specs | a Labtainers cloud VM in a browser | the "Cloud Labtainers" section of the [Student Guide](https://github.com/mfthomps/Labtainers/raw/master/docs/student/labtainer-student.pdf) |
+
+VirtualBox and UTM need **no account**. **VMware** Workstation (Windows/Linux) and Fusion (Mac)
+are free but require creating a **Broadcom account** to download; the appliance imports the same
+way. On **Apple Silicon, VirtualBox is the recommended choice.**
+
+> **Emulation is a last resort.** Emulation means running a **non-native** guest — for example the
+> x86_64 appliance on an Apple-Silicon Mac, which UTM can run under full x86 emulation. It runs
+> every lab but is noticeably **slow**. Use it only if a native appliance for your machine
+> genuinely is not an option. The [Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac)
+> guide covers both routes for Macs in detail.
+
+**What's next:** [Setup A](#4-setup-a--x86-windows--linux--intel-mac) (x86) or
+[Setup B](#5-setup-b--apple-silicon-mac-arm64) (Apple Silicon). Do **one**, then everyone does
+[section 6](#6-run-your-first-lab-the-same-on-every-platform).
+
+---
+
+## 4. Setup A — x86 (Windows / Linux / Intel Mac)
+
+Use this if your computer has an Intel or AMD processor — any Windows PC, Linux PC, or **Intel
+Mac** (an Intel Mac runs the x86_64 appliance natively, not emulated).
+
+### 4.1 Install your hypervisor
+
+Pick one and install it:
+
+- **VirtualBox** — [virtualbox.org/wiki/Downloads](https://www.virtualbox.org/wiki/Downloads);
+  no account. Accept the installer defaults (approve the driver / brief network-reset prompt).
+- **VMware Workstation** (Windows/Linux) — free, needs a Broadcom account.
+
+### 4.2 Download the x86_64 appliance (NPS page)
+
+Open the official **NPS Labtainers virtual-machine-images page**. It lists **two separate x86_64
+appliances** — a VirtualBox-labeled `.ova` and a VMware `.ova` (`LabtainerVM24a-VMWare.ova`).
+Download the one for **your** hypervisor. It is several GB — allow time and do not cancel. Then
+check its SHA-256 against the value on the page: on Windows run `certutil -hashfile <file> SHA256`,
+on Linux `sha256sum <file>`, on a Mac `shasum -a 256 <file>`.
+
+![NPS downloads page: VirtualBox .ova and VMware .ova](tutorial/images/setupA-01b-download.png)
+
+The appliance login shown on that page is **user `student` / password `password123`** (public).
+
+### 4.3 Import the appliance
+
+![VirtualBox import: File menu → choose the .ova → settings → progress](tutorial/clips/setupA-import.webp)
+
+**VirtualBox:**
+
+1. **File → Import Appliance** (the **Import** toolbar button does the same).
 
    ![VirtualBox File menu with Import Appliance](docs/img/virtualbox-file-menu.png)
 
-5. Leave **Source** at Local File System, pick the `.ova` in the **File** field and click
-   **Next**.
+2. Leave **Source** at *Local File System*, pick the `.ova` in the **File** field, **Next**.
 
-   ![Import Virtual Appliance, Appliance to import page, with the .ova path in the File field](docs/img/virtualbox-import-2-file.png)
+   ![Import Virtual Appliance, .ova in the File field](docs/img/virtualbox-import-2-file.png)
 
-6. The **Appliance settings** page lists the VM the file contains. Accept the defaults and
-   click **Finish**.
+3. The **Appliance settings** page lists the VM. Give it the RAM/CPU from
+   [section 2](#2-specs-minimum-vs-recommended), then **Finish**.
 
    ![Import Virtual Appliance, Appliance settings page](docs/img/virtualbox-import-3-settings.png)
 
-7. The import runs for a few minutes; the progress shows in the notification panel on the
-   right of the main window. The VM then appears in the list on the left.
+4. The import runs for a few minutes (progress in the right-hand panel); the VM then appears in
+   the list.
 
    ![Importing appliance progress](docs/img/virtualbox-import-4-progress.png)
 
-8. Select the VM and click **Start**.
+5. Select the VM and click **Start**.
 
-*The screenshots show VirtualBox 7.1 importing our arm64 `.ova`; the NPS x86_64 file goes
-through the same dialogs.*
+*(The screenshots show VirtualBox 7.1 importing our `.ova`; the NPS x86_64 file uses the same
+dialogs.)*
 
-**Windows 11 hosts (VirtualBox).** A few settings make the lab desktop and its browsers
-behave; set them with the VM powered off, under **Settings > Display**:
+**Windows 11 hosts (VirtualBox) — a few settings that make the lab desktop behave.** With the VM
+powered off, under **Settings → Display**: **Graphics Controller: VMSVGA**, **Video Memory:
+128 MB**, **3D Acceleration: off** (with 3D on, Firefox inside the lab containers has failed to
+open a window on some machines). Run `donlab` from a terminal **on the VM's own desktop**, not
+over SSH. If the VM feels very slow and shows a green turtle icon, Hyper-V is active on the host
+and VirtualBox is in its slower compatibility mode; the VirtualBox manual explains how to turn
+that off. There are many host/driver combinations, so you may need to try a couple to find the
+one that works.
 
-- **Graphics Controller: VMSVGA** (Oracle's default for Linux guests), **Video Memory:
-  128 MB**, **3D Acceleration: off**. With 3D on, Firefox inside the lab containers has opened
-  no window on some machines.
-- Run `./donlab` from a terminal **on the VM's own desktop**, not over ssh from Windows: the
-  lab's browsers need the VM's screen.
-- The first `donlab` launch installs a few helpers and may reboot the VM once into the i3
-  desktop the labs use; that is expected.
+**VMware (Workstation / Player / Fusion):** install it, download `LabtainerVM24a-VMWare.ova`,
+check its SHA-256, then **File → Open** (Workstation/Player) or **File → Import** (Fusion),
+select the `.ova`, accept the defaults, and start the VM. (If VMware complains the format does not
+match OVA standards, choose **Retry**.) The appliance does not auto-update Ubuntu; decline the
+update prompt if it appears.
 
-There are many variables (VirtualBox version, Windows graphics driver, whether Hyper-V or
-Core Isolation is enabled on the host), so you may have to try a couple of combinations on
-your own machine to find the one that works. If the VM feels very slow and shows a green
-turtle icon in its status bar, Hyper-V is active on the Windows host and VirtualBox is running
-in its slower compatibility mode; the VirtualBox manual describes how to turn that off.
+### 4.4 First boot and login
 
-VMware (Workstation, Player or Fusion):
+![First boot: login, then the Labtainers desktop](docs/img/first-boot-desktop.png)
 
-1. Install VMware Workstation, Player or Fusion.
-2. Download the VMware appliance (`LabtainerVM24a-VMWare.ova` at the time of writing).
-3. Compare the file's SHA-256 checksum with the value on the NPS page.
-4. Choose **File > Open** (Workstation, Player) or **File > Import** (Fusion), select the
-   `.ova` file and accept the defaults.
-5. Start the VM.
+You may first see a login screen. Sign in (`student` / `password123` on the NPS appliance), then
+reach the desktop. On first boot the appliance updates Labtainers itself; let it finish.
 
-<!-- TODO screenshot: VMware File > Open / Import dialog with the Labtainers .ova selected (docs/img/vmware-import.png) -->
+> **Fresh-appliance note:** the first `donlab` run may set up the **i3** desktop the labs use and
+> **reboot the VM once** — log back in and continue. You can do that setup explicitly first with
+> `donlab --init` ([section 6.3](#63-set-up-the-vm-once-donlab---init)).
 
-The appliance is configured to not perform Ubuntu system updates automatically. Decline the
-update prompt if one appears; the updates are not needed for the labs.
+**What's next:** [section 6 — run your first lab](#6-run-your-first-lab-the-same-on-every-platform).
 
-### 2b. Our arm64 appliance (Apple Silicon: UTM, VirtualBox, VMware Fusion)
+---
 
-The appliance is publicly hosted in this
-[NPS OneDrive folder](https://nps01-my.sharepoint.com/:f:/g/personal/spencer_dollahite_nps_edu/IgAZgs-majINRZLvHu-oPPj0AQei1zJ9S0xHeJThBPQamjE).
-Take the `.utm.zip` for UTM, or the `.qcow2` or `.ova` if you use another hypervisor. Each
-file has a `.sha256` checksum beside it. The full guide, including the emulated x86_64
-alternative and the instructor build notes, is
-[Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac); the essentials
-are repeated here.
+## 5. Setup B — Apple-Silicon Mac (arm64)
 
-Minimum requirements. The appliance runs a full Linux desktop plus Docker containers. The
-VM itself is configured for 4 CPU cores and 8 GB of RAM; leave the rest for macOS.
+Use this if your computer is a Mac with Apple Silicon (M1/M2/M3/M4). It runs the **arm64**
+appliance natively.
 
-| | Minimum | Recommended |
-|---|---|---|
-| Mac | Any Apple Silicon (M series) | Apple Silicon with performance cores to spare |
-| macOS | 13 (Ventura) | Current release |
-| RAM | 16 GB | 32 GB (a 16 GB Mac works but is tight while the 8 GB VM and macOS both run) |
-| Free disk | ~40 GB | 60 GB or more (the download is ~5 GB, expands to a ~40 GB disk, and each lab pulls its Docker images on first run) |
+### 5.1 Install your hypervisor
 
-UTM:
+Apple Silicon runs the arm64 appliance natively on three hypervisors. Pick one:
 
-1. Install UTM from [mac.getutm.app](https://mac.getutm.app/) (free, no account).
-2. Download the `.utm.zip` from the OneDrive folder.
-3. Verify it: in Terminal, `shasum -a 256 ~/Downloads/<file>.utm.zip`, and compare with the
-   `.sha256` file beside it.
-4. Unzip the file. You get a `.utm` bundle.
-5. Open UTM. On the welcome screen click the **+** button in the toolbar or the
-   **Create a New Virtual Machine** tile (either one opens the Start sheet).
+- **VirtualBox** (recommended on Apple Silicon; no account) — import the arm64 `.ova`.
+- **VMware Fusion** (free; Broadcom account) — import the arm64 `.ova`.
+- **UTM** — [mac.getutm.app](https://mac.getutm.app/) (no account) — use the `.utm.zip`.
 
-   ![UTM welcome screen with the + button and the Create a New Virtual Machine tile highlighted](docs/img/utm-1-welcome.png)
+### 5.2 Download the appliance (OneDrive)
 
-6. In the Start sheet, under **Existing**, click **Open...**. Choose the `.utm` bundle you
-   unzipped, from wherever you saved it on your Mac (for example your Downloads folder).
-   Double-clicking the `.utm` bundle in Finder does the same thing.
+Open the **OneDrive folder** (linked in [section 3](#3-which-image-and-hypervisor)). It holds the
+arm64 `.ova`, a `.qcow2`, and a `.utm.zip`, each with a `.sha256` beside it:
 
-   ![UTM Start sheet with the Open link under Existing highlighted](docs/img/utm-2-open.png)
+- **VirtualBox or VMware Fusion:** download the arm64 **`.ova`** (several GB; don't cancel). It
+  imports directly — no unzip.
+- **UTM:** download the **`.utm.zip`**, then **double-click it** so macOS Archive Utility extracts
+  the `.utm` bundle.
 
-7. The VM appears in the library as **Labtainers ARM** with its settings summary. The bundle
-   is pre-configured: **Virtualize**, **aarch64**, 4 cores, 8 GB RAM, UEFI boot, **Emulated
-   VLAN** networking, and clipboard sharing with macOS. These are sensible defaults for
-   most Macs. Change them only if you know what you are doing, want to raise the CPU or
-   memory above the minimums, or are troubleshooting a problem.
+![OneDrive folder: .ova for VirtualBox/Fusion, .utm.zip for UTM](tutorial/images/setupB-01b-download.png)
 
-   ![UTM library with the imported Labtainers ARM VM selected](docs/img/utm-3-library.png)
+Verify your download, e.g. `shasum -a 256 ~/Downloads/<file>` and compare with the `.sha256`.
 
-8. Click the Start button (the triangle in the toolbar, or on the VM's row) and log in with
-   the credentials supplied with the download.
+### 5.3 Import the appliance
 
-UTM does not support snapshots. If you want snapshots, consider VMware Fusion or
-VirtualBox instead (import the `.ova`). Otherwise, in UTM you can clone the VM to keep a
-copy of its current state, or keep the original `.utm` bundle as a clean state to start
-from again. Either way, clone or snapshot before big changes that might break things.
+![UTM: welcome → Open the .utm → it appears in the library](tutorial/clips/setupB-import.webp)
 
-If the VM loses its network after the Mac sleeps or changes Wi-Fi, shut the VM down and
-start it again.
+**VirtualBox / VMware Fusion:** import the `.ova` exactly as in
+[Setup A 4.3](#43-import-the-appliance) (**File → Import Appliance** / **File → Import**).
 
-## 3. First boot: verify that Labtainers works
+**UTM:**
 
-1. Log in. For the NPS x86_64 appliance the NPS images page states the user id `student`
-   and the password `password123`. For the arm64 appliance use the credentials supplied
-   with the download.
-2. On first boot the appliance updates Labtainers itself; allow it to finish. The Student
-   Guide notes that the prepackaged VMs then open a terminal in the Labtainers workspace
-   directory, with some hints.
+1. Open UTM; click **+** (or the *Create a New Virtual Machine* tile).
 
-![arm64 appliance desktop after first boot, with the terminal open in the Labtainers workspace directory](docs/img/first-boot-desktop.png)
+   ![UTM welcome screen](docs/img/utm-1-welcome.png)
 
-*The arm64 appliance after first boot: it logs in automatically and opens a terminal in the
-Labtainers workspace directory. The NPS x86_64 appliance shows a login screen first, then
-the same kind of terminal.*
+2. Under **Existing**, click **Open…** and choose the `.utm` bundle (double-clicking it in Finder
+   does the same).
 
-3. All labs are run from the workspace directory. If you open a new terminal, change to it
-   first:
+   ![UTM Start sheet, Open under Existing](docs/img/utm-2-open.png)
 
-   ```bash
-   cd $LABTAINER_DIR/scripts/labtainer-student
-   ```
+3. The VM appears as **Labtainers ARM** (pre-configured: Virtualize, aarch64, 4 cores, 8 GB,
+   Emulated VLAN networking, clipboard sharing). Start it and log in with the supplied
+   credentials.
 
-   On the NPS appliance this is `~/labtainer/trunk/scripts/labtainer-student`; the
-   appliance also provides the shortcut `~/labtainer/labtainer-student`.
+   ![UTM library with the imported Labtainers ARM VM](docs/img/utm-3-library.png)
 
-4. Confirm the framework answers:
+UTM has no snapshots; use VirtualBox or Fusion if you want them, or clone the `.utm` bundle. If
+the VM loses its network after the Mac sleeps or changes Wi-Fi, shut it down and start it again
+(keep the network mode at **Emulated VLAN**).
 
-   ```bash
-   labtainer -h      # command help
-   labtainer         # no arguments: lists the labs installed on this VM
-   labtainer -d      # diagnostics on the environment Labtainers expects
-   ```
+### 5.4 First boot and login
 
-5. `update-labtainer.sh` updates the framework itself (bug fixes and the stock labs). Run it
-   when your instructor asks you to, or when the VM image is older than the current
-   Labtainers release. `donlab --update-labtainers` (section 4) runs the same updater.
+![First boot: login, then the desktop](docs/img/first-boot-desktop.png)
 
-Do not run more than one lab at a time; the Student Guide states that results are not
-reliable when labs overlap.
+Sign in and let the first-boot update finish.
 
-## 4. Running a lab with the donlab launcher
+> **Fresh-appliance note:** the first `donlab` run may set up the **i3** desktop the labs use and
+> **reboot the VM once** — log back in and continue. You can do that setup explicitly first with
+> `donlab --init` ([section 6.3](#63-set-up-the-vm-once-donlab---init)).
 
-`donlab` is a single script. Your VM appliance already carries it; you can also take the
-copy from this repository or paste it in (section 4.1). The launcher is keyless: it holds no
-course key on its own. Each course has its own encrypted lab bundle, and you unlock the one
-for your course with the key your instructor gives you, installed once with
-`donlab --key <course>:<key>` (section 4.2). Without that key, the launcher will not unlock
-your course's labs.
+**What's next:** [section 6 — run your first lab](#6-run-your-first-lab-the-same-on-every-platform).
 
-### 4.1 Install the launcher
+---
 
-1. Get `donlab` into the VM. Practical ways:
-   - Open Firefox inside the VM and download the published `donlab` from this repository,
-     or from a copy your instructor posted (no host-to-VM transfer needed).
-   - Paste it in with vim. On the host, open this repository's `donlab` file, or a copy your
-     instructor posted, in a text editor and copy its entire contents. In the VM:
+## 6. Run your first lab (the same on every platform)
 
-     ```bash
-     cd $LABTAINER_DIR/scripts/labtainer-student
-     vim donlab
-     ```
+From here on it is identical whether you came from Setup A or Setup B. Underneath, `donlab` pulls
+the container images that match your CPU (x86-64 or arm64); you type the same commands either way.
 
-     In vim type `:set paste` and press Enter, press `i`, paste the clipboard into the
-     terminal, press `Esc`, then type `:wq` and press Enter. Make it executable and let it
-     fetch and verify its own published copy:
+> The examples below use `cs3670-lab1`. Substitute **your** course and lab id (see
+> [section 8](#8-lab-ids-and-next-steps)) — for example `cs3600-lab0` or `cs3690-lab2`.
 
-     ```bash
-     chmod +x donlab
-     ./donlab -u
-     ```
-
-     `-u` forces the self-update: the launcher downloads the published copy from this
-     repository, checks its checksum, keeps any course keys you have already installed, and
-     replaces the pasted file. A successful `-u` confirms the paste was intact. Then install
-     your course key (section 4.2).
-   - Drag and drop, or a shared folder, if your hypervisor's guest tools are installed
-     (VirtualBox Guest Additions, VMware Tools; UTM shares the clipboard, not files, by
-     default).
-2. If you downloaded or copied the file rather than pasting it, put it in the Labtainers
-   workspace directory and make it executable:
-
-   ```bash
-   mv ~/Downloads/donlab $LABTAINER_DIR/scripts/labtainer-student/
-   cd $LABTAINER_DIR/scripts/labtainer-student
-   chmod +x donlab
-   ```
-
-   The launcher locates the Labtainers tree itself and changes into this directory when
-   run from elsewhere, so another location in your home directory also works. The file must
-   remain writable by you for the self-update to apply.
-
-### 4.2 Install your course key
-
-Each course has its own encrypted lab bundle. Your instructor gives you a key for the course
-you are enrolled in; install it once, and the launcher keeps it through its self-updates:
+All labs run from the Labtainers workspace directory:
 
 ```bash
-./donlab --key cs3670:<key>
+cd $LABTAINER_DIR/scripts/labtainer-student
 ```
 
-Use `cs3600`, `cs3670` or `cs3690` to match your course, and paste the key exactly as your
-instructor provided it. If you are enrolled in more than one of these courses, install each
-key with its own `--key` line. Re-run the command at any time to replace a key.
+On the NPS appliance this is `~/labtainer/trunk/scripts/labtainer-student` (with the shortcut
+`~/labtainer/labtainer-student`); if `$LABTAINER_DIR` is ever unset, use that literal path.
 
-### 4.3 Set up the VM once: `./donlab --init`
+### 6.1 Update the `donlab` launcher
 
-Run this once after the key is installed. It prepares the generic lab environment for any
-course: the helpers the labs assume (tmux, vim, flameshot, xclip, xdotool), Firefox on the
-VM, the `cdlab` shortcut, the e-mail address the labs record (optional here; a lab asks
-later if you skip it), cgroup v2 if the appliance boots the older layout, and the i3 tiling
-desktop as your login session. It then reboots the VM once.
+Your appliance already ships `donlab` in the workspace directory, so you do not install it — you
+just bring it current. From `$LABTAINER_DIR/scripts/labtainer-student`:
+
+```bash
+./donlab -u          # self-update: fetches + verifies the published copy, keeps your keys
+```
+
+That fetches and verifies the latest published launcher and keeps your installed keys. The file
+must stay writable for the self-update to apply.
+
+<details>
+<summary>Only if you need to replace <code>donlab</code> by hand (it is missing or will not update)</summary>
+
+Open this repo's `donlab`, copy all of it, then in the VM:
+
+```bash
+cd $LABTAINER_DIR/scripts/labtainer-student
+vim donlab
+```
+
+In vim type `:set paste`, Enter, `i`, paste, `Esc`, `:wq`, Enter. Then `chmod +x donlab` and
+`./donlab -u`. (You can also download `donlab` in the VM's Firefox, or drag it in if guest tools
+are installed.)
+
+</details>
+
+### 6.2 Install your course key
+
+The one-liner your instructor gives you installs the course key. **Paste that exact one-liner,
+with your real key** — do not type `<your-key>` literally. Only the key is blanked below.
+
+```bash
+./donlab --key cs3670:<your-key>
+```
+
+donlab replies: `Installed your cs3670 key. You can now run, e.g.:  donlab cs3670-lab1`. Use
+`cs3600` / `cs3690` for those courses; install once per course, and the launcher keeps it through
+self-updates.
+
+![donlab --key: install your course key (key redacted)](tutorial/clips/key.webp)
+
+### 6.3 Set up the VM once: `donlab --init`
+
+Run this once after the key is installed. It prepares the generic lab environment (tmux, vim,
+flameshot, xclip, xdotool, Firefox, the `cdlab` shortcut, cgroup v2 if needed, and the **i3**
+tiling desktop as your login session), then **reboots the VM once**. After the reboot the i3
+quick-start window opens in the workspace directory and finishes with `donlab --check`. It also
+puts `donlab` on your PATH, so after `--init` you can run `donlab cs3670-lab1` from any directory
+(this guide keeps the `./donlab` form, which works from the workspace directory).
 
 ```bash
 ./donlab --init
 ```
 
-After the reboot, log in as usual. The i3 quick-start window opens in the Labtainers
-student directory with the key bindings, and finishes with the environment check
-(`donlab --check`). Starting a lab after that needs no further setup, prompts or reboots.
-`--init` also puts `donlab` on your PATH, so from then on `donlab cs3670-lab1` works from
-any directory (the examples below keep the `./` form, which works too). `./donlab --init`
-is safe to run again at any time.
+### 6.4 Check the VM is ready
 
-### 4.4 Start a lab
+```bash
+./donlab --doctor      # --check is the same command
+```
+
+It checks Docker, the X display, the desktop/clipboard, Docker Hub reachability, disk/RAM/CPU,
+and that `vim`, `tmux` and `flameshot` are present. **Green `PASS`** means ready; yellow `WARN` is
+advisory (a small CPU just means builds are slower). **A red `FAIL` blocks a lab — fix it (or ask
+your instructor) before continuing.**
+
+![donlab --doctor: readiness checks](tutorial/clips/doctor.webp)
+
+### 6.5 Start a lab
 
 ```bash
 ./donlab cs3670-lab1
 ```
 
-What happens, in order (each step prints a `==>` line):
+![donlab cs3670-lab1: bundle check, lab start, manual + tmux](tutorial/clips/start.webp)
 
-1. **Self-update.** The launcher fetches the published copy from this repository, verifies
-   its checksum, keeps your local key and channel, and replaces itself if the published copy
-   is newer. Failures (offline, bad checksum, read-only file) are ignored and the copy on
-   disk is used.
-2. **Lab bundle.** Using your installed course key, it compares the published
-   `imodule-<course>.tar.enc.sha256` with the version on the VM. If they differ it downloads
-   your course's bundle, verifies the checksum, decrypts it and installs it with the
-   framework's `imodule` command. Otherwise it prints `Lab bundle is already up to date`. If
-   you have not installed the course key yet, it stops and tells you to run
-   `donlab --key <course>:<key>`.
-3. **Images.** It checks the container registry for updated images for this lab and
-   downloads any that changed. On Apple Silicon it installs the lab's arm64 images; a lab
-   with no arm64 build is refused up front.
-4. **Start.** It runs `labtainer <lab>`. The first start of a lab downloads that lab's
-   container images and can take several minutes. The framework then shows the scenario
-   brief and waits for Enter.
-5. **Manual.** It opens the lab manual in Firefox.
-6. **Layout.** It lays the lab out in one tmux session: one window per host you use, one
-   pane per terminal that host was given, and attaches you to it.
+In order, it self-updates, syncs your course's lab bundle (using your key), pulls any changed
+images, runs `labtainer <lab>`, opens the manual in Firefox, and lays the hosts out in tmux. The
+**first** start of a lab pulls that lab's images and can take several minutes. The first time any
+lab runs, the framework asks for your e-mail — use the address your instructor specifies; it
+becomes part of your submission file name.
 
-The first time you start any lab the framework asks for your e-mail address. It becomes part
-of the file name of your submission archive, so use the address your instructor specifies
-(your official institution e-mail is a good default unless told otherwise).
+![donlab first run: bundle + image pull](docs/img/donlab-first-run.png)
+![donlab second run: up to date, scenario brief, manual URL, tmux hint](docs/img/donlab-run.png)
 
-The first start, showing the bundle download and installation followed by the image pull:
+You land in the **i3** desktop: your terminal (a tmux session logged into the lab host) on the
+left, the lab manual on the right.
 
-![donlab first run: bundle downloaded and installed, lab image pulled](docs/img/donlab-first-run.png)
+![The lab desktop: terminal + manual, dark theme](tutorial/clips/desktop.webp)
 
-![donlab second run: bundle and images up to date, scenario brief, manual URL, tmux hint](docs/img/donlab-run.png)
+### 6.6 i3, the window manager
 
-*Captured on a development machine, so the i3 switch is skipped and the manual path
-shown in the second image has been replaced with the appliance path
-(`/home/student/labtainer/trunk/labs/<lab>/docs/<lab>.html`).*
+i3 tiles windows side by side (no overlapping windows to hunt for). **Super** is the Windows / ⌘
+Command key. `Super`+arrows move focus; `Super`+`Shift`+arrows move a window; `Super`+`Enter` a
+new terminal; `Super`+`p` or `Print` a screenshot.
 
-### 4.5 The manual
+`Super`+`f` fullscreens the focused window and back:
 
-Firefox opens the manual for the lab. The sidebar tracks your progress; **Bearings** holds
-the scenario's credentials and hosts; **Actions** runs Check Work, Stop Lab and Reset Lab
-against the running lab; **Download Lab Report** exports your answers and screenshots as
-the PDF you submit.
+![i3: Super+f fullscreen and restore](tutorial/clips/i3-fullscreen.webp)
 
-![The lab manual open in Firefox](docs/img/manual-firefox.png)
+`Super`+`Shift`+`1`..`4` sends a window to workspace 1–4; `Super`+`1`..`4` switches to it:
 
-![The Actions menu of the manual: Check Work, Stop Lab, Reset Lab](docs/img/manual-actions-menu.png)
+![i3: move a window to another workspace, then switch to it](tutorial/clips/i3-workspace.webp)
 
-### 4.6 The tmux layout
+### 6.7 tmux, your terminals
 
-The launcher lays the lab out in one tmux session, one window per host, named after the
-host. The status line at the bottom lists the windows:
+The lab's hosts are laid out in one tmux session (one window per host). The prefix is `Ctrl-b`;
+everything is vi-keyed and the editor is **vim**. `Ctrl-b d` detaches (the lab keeps running);
+`Ctrl-b n`/`p` step between hosts, `Ctrl-b w` lists them.
 
-![tmux session for cs3670-lab2 with windows hi-web01, hi-web02 and hardening-cn](docs/img/tmux-multi-host.png)
+`Ctrl-b %` / `Ctrl-b "` split a window into panes (each a shell in the same host):
 
-The tmux keys and the i3 desktop are covered in the FAQ at the bottom of every lab manual.
-Prefer the framework's separate pop-up terminal windows? Run `./donlab <lab> --no-tmux`.
+![tmux: split into panes](tutorial/clips/tmux-panes.webp)
 
-### 4.7 Stop the lab and submit
+`Ctrl-b [` enters vi copy-mode (scroll/search with `h j k l`, `/`, `?`):
 
-Stop the lab from the workspace directory, or with **Actions > Stop Lab** in the manual:
+![tmux: vi copy-mode and search](tutorial/clips/tmux-copymode.webp)
+
+In a multi-host lab each host is its own window:
+
+![tmux windows: one per host](docs/img/tmux-multi-host.png)
+
+Prefer the framework's pop-up terminal windows? Run `./donlab <lab> --no-tmux`.
+
+### 6.8 The manual and its features
+
+Firefox opens the manual. The sidebar tracks progress; the top bar has **Bearings**, **Actions**,
+and **Download Lab Report**.
+
+![The lab manual in Firefox](tutorial/clips/manual.webp)
+
+**Writeboxes, Check Work, progress — three separate things:**
+
+- A **writebox** holds your answer; it **autosaves** to the browser and is collected into your Lab
+  Report.
+- **"Check my answer"** (on some questions) is a self-check; the **first click locks** that answer
+  and shows feedback such as "Looks right".
+- The **progress bar** advances when you tick **"Mark this section complete"** on a section.
+
+![Writebox autosave + self-check + progress](tutorial/clips/writebox.webp)
+
+Hover a dotted-underlined term for a **glossary** popover (the owner definition first, with
+authoritative sources):
+
+![Glossary hover](tutorial/clips/glossary.webp)
+
+**Bearings** is your briefing card: who you are on each host, and the CAC PIN for FRMS (training
+values). In CS3670 Lab 1, FRMS runs inside the lab — open it from the workstation's Firefox and
+sign in with your CAC.
+
+![Bearings: your briefing / credentials card](tutorial/clips/bearings.webp)
+
+**Actions** runs Check Work, Stop Lab and Reset Lab against the running lab:
+
+![The Actions menu: Check Work, Stop Lab, Reset Lab](docs/img/manual-actions-menu.png)
+
+### 6.9 Finish, export the Lab Report, and submit
+
+**Download Lab Report → Finish & build report STOPS the lab**: it runs Check Work, then `stoplab`
+(which stops the lab and packages your `.lab` submission), then builds and downloads the report.
+While still working, use **"Just download a draft"**. The report is **dark-themed in all cases,
+including Save / Print to PDF**.
+
+![Finish & build report → the dark Lab Report (answers, FRMS, Standing & CTF, progress)](tutorial/clips/export.webp)
+
+You can also stop from the terminal:
 
 ```bash
 stoplab cs3670-lab1
 ```
 
-![stoplab output: Results stored in directory ~/labtainer_xfer/cs3670-lab1](docs/img/stoplab.png)
+![stoplab: Results stored in ~/labtainer_xfer/cs3670-lab1](docs/img/stoplab.png)
 
-`stoplab` writes your submission archive, a file with the `.lab` extension, under
-`~/labtainer_xfer/<lab>/` and prints that directory. Your work is preserved; re-running
-`./donlab <lab>` resumes the lab where you left it. You submit two files to the LMS unless
-your instructor says otherwise: the `.lab` archive and the Lab Report PDF exported from the
-manual. If the LMS rejects the `.lab` for size, upload the PDF and send the `.lab` to your
-instructor by the route given in your course instructions.
+`stoplab` writes your submission — a `.lab` file — under `~/labtainer_xfer/<lab>/`:
 
-`checkwork <lab>` shows how the graded goals are scoring while the lab runs. To discard your
-work and start the lab from scratch: `./donlab <lab> -r`.
+![Your .lab submission on disk](tutorial/clips/labfile.webp)
 
-### 4.8 Other launcher commands
+**Submit to the LMS:** upload the **`.lab` archive** and the **Lab Report PDF** to the
+assignment, unless your instructor says otherwise. If the LMS rejects the `.lab` for size or
+extension, upload the PDF and send the `.lab` by the route your instructor gives. Re-running
+`./donlab <lab>` resumes where you left off; `checkwork <lab>` shows live grading;
+`./donlab <lab> -r` discards and restarts.
+
+### 6.10 Other launcher commands
 
 | Command | Effect |
 |---|---|
-| `./donlab --key <course>:<key>` | Install your key for a course (`cs3600`, `cs3670` or `cs3690`); needed once before that course's labs will unlock. |
-| `./donlab --doctor` | Readiness check: Docker daemon, X display, clipboard, registry reachability, free disk, vim and tmux. |
-| `./donlab -v` | Print the launcher version, channel and build id. |
-| `./donlab -u` | Force a self-update check now and report the outcome. |
+| `./donlab --key <course>:<key>` | Install your key for a course (`cs3600`/`cs3670`/`cs3690`). |
+| `./donlab --doctor` | Readiness check (Docker, display, clipboard, registry, disk, vim, tmux). |
+| `./donlab -v` | Launcher version, channel, build id. |
+| `./donlab -u` | Force a self-update check now. |
 | `./donlab --update-labtainers` | Run the NPS `update-labtainer.sh` framework updater. |
-| `./donlab --reset <lab>` | Discard the lab's containers and networks, then start it fresh. |
-| `./donlab --clean` | Free disk space: old lab images, stopped lab containers, Docker build cache and the framework's temp copies. Running labs, installed labs' images and `~/labtainer_xfer` (your `.lab` archives, grades and reports) are left alone. |
-| `./donlab -h` | Print the usage text. |
-| `DONLAB_NO_PULL=1 ./donlab <lab>` | Skip the registry check for updated images for this run. |
+| `./donlab --reset <lab>` | Discard the lab's containers and networks, then start fresh. |
+| `./donlab --clean` | Free disk: old images, stopped containers, build cache, temp copies (leaves running labs, installed images, and `~/labtainer_xfer`). |
+| `./donlab -h` | Usage text. |
+| `DONLAB_NO_PULL=1 ./donlab <lab>` | Skip the image-registry check for this run. |
 
-## 5. Troubleshooting
+Do not run more than one lab at a time; results are unreliable when labs overlap.
 
-If a problem is not resolved by the answers below, spend 5 to 15 minutes at most searching
-the internet or asking an AI assistant on your own. If it is still unresolved after that,
-reach out to your instructor rather than continuing to struggle with it.
+---
 
-**Can I run `./donlab <lab>` again on a lab that is already running or stopped?**
-Yes. It resumes the lab. The bundle and image checks are no-ops when nothing changed, and
-the tmux layout is rebuilt from the running containers.
+## 7. Troubleshooting / FAQ
 
-**What happens if the VM has no network?**
-The self-update and the bundle check are skipped with a `WARN: ... using installed
-version` line, and the lab starts from the installed bundle and the images already on the
-VM. The first start of a lab does need network access to pull its images. On UTM, a VM that
-shows `Network is unreachable` after the Mac slept needs a shutdown and restart; keep the
-network mode at Emulated VLAN.
+If an answer below does not resolve it, spend 5–15 minutes searching or asking an AI assistant,
+then contact your instructor rather than continuing to struggle.
 
-**The launcher says I need my course key, or prints `WARN: decrypt failed`. Why?**
-You have not installed the key for that course yet, or you installed the wrong one. Your
-instructor provides one key per course; install it once with `donlab --key <course>:<key>`,
-for example `donlab --key cs3670:...`, then run the lab again.
+**Copy/paste between your computer and the VM should just work.** If it does not, check your
+hypervisor's **shared-clipboard** setting (VirtualBox: *Devices → Shared Clipboard →
+Bidirectional*; UTM/VMware have the equivalent). In a terminal, paste is often **Ctrl+Shift+V**.
+If paste still fails, open the LMS from the browser **inside the VM** and upload from there.
 
-**The VM rebooted during the first run. Is something wrong?**
-No. A fresh appliance reboots once after the launcher switches the login session to i3,
-and an older appliance reboots once more after the cgroup v2 conversion. Log in again and
-re-run `./donlab <lab>`.
+**No network in the VM / a Docker Hub `WARN` in `donlab --doctor`.** The self-update and bundle
+check are skipped and the lab starts from what is installed. The **first** start of a lab needs a
+network to pull its images; after that they are cached and later launches work offline. Retry on
+a better network. (UTM: a VM that shows `Network is unreachable` after the Mac slept needs a
+shutdown and restart; keep the network at Emulated VLAN.)
 
-**A lab update renamed or added hosts and the start fails or comes up short. What now?**
-The launcher prunes files left over from a previous version of the lab and drops the
-framework's cached copy of the lab configuration when the host list changed, on every run.
-If a start still fails, run `stoplab <lab>` and start again.
+**The VM rebooted during the first run.** Expected — the one-time i3 setup (and, on an older
+appliance, the cgroup v2 conversion). Log in again and re-run `./donlab <lab>`.
 
-**The start fails with `Already exists` or a leftover network. What now?**
-The launcher stops the leftover lab, removes the blocking Docker network and retries once,
-printing what it cleared. If the lab still does not start it prints the last log lines of
-each container that is not running. Run `stoplab <lab>`, then `./donlab <lab>` again.
-`./donlab --reset <lab>` discards the lab's containers and networks entirely.
+**"You need your course key" / `WARN: decrypt failed`.** The course key is missing or wrong.
+Install it with `donlab --key <course>:<key>` and run the lab again.
 
-**Firefox or Wireshark inside a lab does not open. Why?**
-GUI programs in the containers display on the VM's desktop, so run the launcher from a
-terminal in the desktop session, not over plain SSH. `./donlab --doctor` reports whether
-the display and clipboard are reachable.
+**A lab update renamed or added hosts and the start fails.** The launcher prunes stale per-lab
+files each run; if a start still fails, `stoplab <lab>` then start again.
 
-**The manual's Check Work or Stop Lab buttons do nothing. Why?**
-They need the local helper the launcher starts, and they work only in the Firefox running
-on the same VM as the lab. Run `checkwork <lab>` or `stoplab <lab>` in the terminal instead.
+**`Already exists` or a leftover network.** The launcher stops the leftover, removes the blocking
+Docker network and retries once. If it still fails it prints each non-running container's last log
+lines; run `stoplab <lab>`, then `./donlab <lab>` (or `./donlab --reset <lab>`).
 
-**Where is everything?**
-Labs run from `$LABTAINER_DIR/scripts/labtainer-student`. The installed lab definitions and
-manuals are under `$LABTAINER_DIR/labs/<lab>/` (the manual is `docs/<lab>.html`).
-Submission archives are under `~/labtainer_xfer/<lab>/`. The launcher's state is under
-`~/.config/don-range/`.
+**Firefox or Wireshark inside a lab does not open.** GUI programs display on the VM's desktop, so
+run the launcher from a terminal in the desktop session, not over SSH. `./donlab --doctor` reports
+whether the display and clipboard are reachable. (Windows/VirtualBox: see the Display settings in
+[section 4.3](#43-import-the-appliance).)
 
-**My problem is not listed here.**
-For framework problems see the
+**The manual's Check Work / Stop Lab buttons do nothing.** They need the local helper the
+launcher starts, and work only in the Firefox on the same VM as the lab. Run `checkwork <lab>` or
+`stoplab <lab>` in the terminal instead.
+
+**Where is everything?** Labs run from `$LABTAINER_DIR/scripts/labtainer-student`. Lab definitions
+and manuals are under `$LABTAINER_DIR/labs/<lab>/` (`docs/<lab>.html`). Submissions are under
+`~/labtainer_xfer/<lab>/`. Launcher state is under `~/.config/don-range/`.
+
+**My problem is not listed.** For framework issues see the
 [Labtainers Student Guide](https://github.com/mfthomps/Labtainers/raw/master/docs/student/labtainer-student.pdf)
-and the NPS [support page](https://nps.edu/web/c3o/support1). For anything about the DoN
-Range labs or the launcher, contact your instructor.
+and the NPS [support page](https://nps.edu/web/c3o/support1). For anything about the DoN Range labs
+or the launcher, contact your instructor.
+
+---
+
+## 8. Lab ids and next steps
+
+Start a lab with `donlab <lab-id>`. The lab ids follow `csNNNN-labN`, for example:
+
+- **CS3600:** `cs3600-lab0` … `cs3600-lab9`
+- **CS3670:** `cs3670-lab1` … `cs3670-lab11`
+- **CS3690:** `cs3690-lab0` … `cs3690-lab11`
+
+Install the matching course key first ([section 6.2](#62-install-your-course-key)); the exact labs
+assigned, and their order, come from your instructor. `donlab` with no lab id, or `labtainer`
+with no arguments, lists the labs installed on your VM.
+
+**Other options.** On hardware that cannot meet the specs, the
+[Student Guide](https://github.com/mfthomps/Labtainers/raw/master/docs/student/labtainer-student.pdf)
+("Cloud Labtainers") runs Labtainers in a browser. The interactive and video versions of this
+guide are in [`tutorial/`](tutorial/) (`tutorial/index.html`, `tutorial/vid.html`).
