@@ -200,8 +200,8 @@ Apple Silicon runs the arm64 appliance natively on three hypervisors. Pick one:
 ### 5.2 Download the appliance (OneDrive)
 
 Open the **OneDrive folder** (linked in [section 3](#3-which-image-and-hypervisor)) — these are our
-own custom-built **arm64 native** appliances (distinct from the official NPS x86 images). It holds
-the arm64 `.ova`, a `.qcow2`, and a `.utm.zip`, each with a `.sha256` beside it:
+own custom-built **arm64 native** appliances (distinct from the official NPS x86 images). Download
+the file for your hypervisor (each has a `.sha256` beside it):
 
 - **VirtualBox or VMware Fusion:** download the arm64 **`.ova`** (several GB; don't cancel). It
   imports directly — no unzip.
