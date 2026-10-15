@@ -86,10 +86,12 @@ VirtualBox and UTM need **no account**. **VMware** Workstation (Windows/Linux) a
 are free but require creating a **Broadcom account** to download; the appliance imports the same
 way. On **Apple Silicon, VirtualBox is the recommended choice.**
 
-> **Emulation is a last resort.** Emulation means running a **non-native** guest — for example the
-> x86_64 appliance on an Apple-Silicon Mac, which UTM can run under full x86 emulation. It runs
-> every lab but is noticeably **slow**. Use it only if a native appliance for your machine
-> genuinely is not an option. The [Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac)
+> **Emulation is a last resort.** Emulation runs a **non-native** guest and is a slow fallback, for
+> use only if no native appliance works for your machine. On an Apple-Silicon Mac it means running
+> the **official NPS x86 appliance** under full x86 emulation — the NPS page publishes an **x86_64
+> QCOW2** for exactly this (UTM runs it emulated). That is a different image from the **arm64**
+> appliances on the OneDrive (section 5), which are our own native-virtualization builds and the
+> fast, preferred path. Emulation runs every lab but is noticeably **slow**. The [Labtainer-ARM-mac](https://github.com/spencer-dollahite/Labtainer-ARM-mac)
 > guide covers both routes for Macs in detail.
 
 **What's next:** [Setup A](#4-setup-a--x86-windows--linux--intel-mac) (x86) or
@@ -197,8 +199,9 @@ Apple Silicon runs the arm64 appliance natively on three hypervisors. Pick one:
 
 ### 5.2 Download the appliance (OneDrive)
 
-Open the **OneDrive folder** (linked in [section 3](#3-which-image-and-hypervisor)). It holds the
-arm64 `.ova`, a `.qcow2`, and a `.utm.zip`, each with a `.sha256` beside it:
+Open the **OneDrive folder** (linked in [section 3](#3-which-image-and-hypervisor)) — these are our
+own custom-built **arm64 native** appliances (distinct from the official NPS x86 images). It holds
+the arm64 `.ova`, a `.qcow2`, and a `.utm.zip`, each with a `.sha256` beside it:
 
 - **VirtualBox or VMware Fusion:** download the arm64 **`.ova`** (several GB; don't cancel). It
   imports directly — no unzip.
