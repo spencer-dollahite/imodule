@@ -7,6 +7,8 @@ Students do not need to clone this repository.
 
 The sections below take you from nothing installed to a running lab.
 
+> **📺 Prefer a guided walkthrough?** A full illustrated, dark-themed tutorial — from nothing installed through installing your hypervisor, getting the appliance, `donlab`, your first lab, and exporting/submitting the Lab Report — is in [`tutorial/`](tutorial/): open **`tutorial/index.html`** for the step-by-step with screenshots, or **`tutorial/vid.html`** to watch the video version.
+
 1. [Which image do I use?](#1-which-image-do-i-use)
 2. [Get a Labtainers VM running](#2-get-a-labtainers-vm-running)
 3. [First boot: verify that Labtainers works](#3-first-boot-verify-that-labtainers-works)
@@ -37,7 +39,7 @@ routes in detail.
 The images, their checksums and brief import instructions are published at
 [nps.edu/web/c3o/virtual-machine-images](https://nps.edu/web/c3o/virtual-machine-images).
 The [Labtainers page](https://nps.edu/web/c3o/labtainers) links the Student Guide, the
-lab manuals and a video tutorial on installation.
+lab manuals and a video tutorial on installation. A full DoN Range walkthrough with video is in [`tutorial/`](tutorial/) (watch `tutorial/vid.html`).
 
 VirtualBox:
 

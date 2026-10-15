@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DoN Range — Zero to Lab</title>
+<style>
+  :root{--bg:#0f1115;--panel:#161922;--ink:#e7eaf0;--muted:#9aa6b4;--accent:#5aa9d6;--gold:#e0c060;--line:#242a35;--red:#e0564b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"DejaVu Sans",sans-serif}
+  header{padding:34px 20px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#1a2a4a,#0f1115)}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+  h1{margin:0 0 6px;font-size:30px;letter-spacing:.3px}.sub{color:var(--muted);margin:0}
+  h2{margin:34px 0 8px;font-size:22px;color:var(--accent)}
+  h2 .tag{font-size:12px;color:var(--muted);font-weight:400;margin-left:8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .card b{color:var(--ink)}
+  table{border-collapse:collapse;width:100%;margin:8px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left}
+  th{background:#1b2230;color:#cfe0f7}
+  .pick{display:flex;gap:14px;flex-wrap:wrap;margin:18px 0 6px}
+  .pick button{flex:1 1 320px;cursor:pointer;text-align:left;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px 18px;font-size:16px}
+  .pick button:hover{border-color:var(--accent)}
+  .pick button.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(90,169,214,.35) inset}
+  .pick b{display:block;font-size:18px;margin-bottom:3px}.pick small{color:var(--muted)}
+  .hint{color:var(--muted);font-size:14px;margin:6px 0 0}
+  .note{border-left:3px solid var(--gold);padding:8px 14px;background:#191c22;border-radius:0 8px 8px 0;margin:12px 0}
+  figure{margin:20px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  figure img{display:block;width:100%;height:auto;background:#000}
+  figcaption{padding:12px 16px;border-top:1px solid var(--line)}
+  figcaption .t{font-weight:600}figcaption .n{color:var(--muted);font-size:14px;margin-top:3px}
+  .badge{display:inline-block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#3a2020;color:#f1b4ac;border:1px solid #5a2d2d;border-radius:6px;padding:1px 7px;margin-left:8px}
+  code{background:#0c0e12;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:13px;color:#cfe0f7}
+  footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);margin-top:40px;padding:20px 0 60px}
+  .hidden{display:none}a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>DoN Range — Zero to Lab</h1>
+  <p class="sub">From a bare computer to running and submitting your first lab (CS3670 Lab 1).</p>
+</div></header>
+
+<div class="wrap">
+  <h2>Before you start</h2>
+  <div class="card">
+    <b>From your instructor:</b> the appliance download (the <b>NPS downloads page</b> for x86; the
+    <b>OneDrive folder</b> for Apple-Silicon arm64), your <b>VM login</b>, and your <b>cs3670 course key</b>.
+    <table>
+      <tr><th>Resource</th><th>Minimum</th><th>Recommended</th></tr>
+      <tr><td>Host OS</td><td colspan="2">64-bit Windows 10/11, macOS, or Linux (current release)</td></tr>
+      <tr><td>Host RAM</td><td>16 GB (the VM uses 8 GB)</td><td>16 GB+ (scales with the guest)</td></tr>
+      <tr><td>Guest RAM</td><td>8 GB</td><td>8 GB+ (if the host can spare it)</td></tr>
+      <tr><td>Guest vCPU</td><td>2</td><td>4+ (more if you have the cores)</td></tr>
+      <tr><td>Free host disk</td><td>~80 GB</td><td>~120 GB+</td></tr>
+    </table>
+    "+" = this or more, without starving the host OS. The guest ships at <b>8 GB RAM / 60 GB virtual
+    disk</b> (it grows as labs run). On Intel/AMD PCs and Intel Macs, enable <b>CPU virtualization</b>
+    (VT-x / AMD-V) in BIOS/UEFI; Apple-Silicon Macs need no such setting.
+    <div class="note">These numbers are a general baseline, not a one-size-fits-all guarantee — they
+    won't be ideal for every hardware/hypervisor combination. Feel free to adjust the VM's vCPU, RAM and
+    disk, and other hypervisor settings (display/graphics especially, plus clipboard and networking) to
+    suit your machine and smooth out performance. There are too many combinations to list, so it's worth
+    experimenting and doing a little of your own research to settle on a good setup.</div>
+    <table>
+      <tr><th>Your machine</th><th>Hypervisors</th><th>Appliance (source)</th></tr>
+      <tr><td>Windows / Linux PC (x86-64)</td><td><b>VirtualBox</b> or VMware Workstation</td><td>x86_64 .ova &mdash; NPS page</td></tr>
+      <tr><td><b>Intel Mac</b> (x86-64, native)</td><td><b>VirtualBox</b> or VMware Fusion</td><td>x86_64 .ova &mdash; NPS page</td></tr>
+      <tr><td>Apple-Silicon Mac (arm64)</td><td><b>VirtualBox (preferred)</b>, Fusion, or UTM</td><td>arm64 .ova (VB/Fusion) or .utm.zip (UTM) &mdash; OneDrive</td></tr>
+    </table>
+    <div class="note"><b>Pick the native path.</b> Run the appliance that matches your machine's CPU,
+    virtualized natively (an Intel Mac runs the x86_64 appliance natively, not emulated).
+    <b style="color:var(--gold)">Emulation</b> (a non-native guest, e.g. the x86_64 appliance on an
+    Apple-Silicon Mac) is <b>slow</b> and a <b>last resort</b>, only if the native path won't work.
+    On Apple Silicon, <b>VirtualBox is recommended</b>. VirtualBox and UTM need no account; VMware is free but needs a Broadcom account.</div>
+  </div>
+
+  <h2>1 · Pick your computer</h2>
+  <p class="hint">Do <b>one</b> setup. The second half (Core) is identical for everyone.</p>
+  <div class="pick" id="pick">
+    <button data-p="A" onclick="choose('A')"><b>Windows / Linux / Intel-Mac (x86-64)</b>
+      <small>VirtualBox (or VMware) + the official NPS x86_64 appliance</small></button>
+    <button data-p="B" onclick="choose('B')"><b>Apple-Silicon Mac (M1/M2/M3 · arm64)</b>
+      <small>VirtualBox (preferred), Fusion, or UTM + the arm64 appliance</small></button>
+  </div>
+
+  <section id="setup"></section>
+  <section id="core" class="hidden">
+    <h2>3 · Core <span class="tag">identical on every platform</span></h2>
+    <p class="hint"><code>donlab</code> pulls the container images that match your CPU — you type
+      nothing different.</p>
+    <div id="corefigs"></div>
+  </section>
+
+  <footer>
+    Full write-up: <a href="TUTORIAL.md">TUTORIAL.md</a> · Video page: <a href="vid.html">vid.html</a> ·
+    Video script: <a href="STORYBOARD.md">STORYBOARD.md</a> ·
+    Figure provenance: <a href="MANIFEST.md">MANIFEST.md</a> ·
+    What was verified: <a href="SANITY-LOG.md">SANITY-LOG.md</a><br>
+    Figures marked <span class="badge">needs a seat</span> are dark instruction cards pending a real
+    capture on a Windows PC / Mac / the course LMS. Dark theme throughout, including the exported Lab
+    Report; only the course key is redacted.
+  </footer>
+</div>
+
+<script>
+const F = (src,t,n,ph)=>({src,t,n,ph:!!ph});
+const DATA = {
+  A:[
+    F("images/setupA-01-vbox-install.png","A1 · Install your hypervisor","Pick one: VirtualBox (no account) or VMware Workstation (free, Broadcom account). Both import the .ova.",true),
+    F("images/setupA-01b-download.png","A1b · Download the appliance (NPS)","From the official NPS downloads page: the x86_64 .ova (several GB — don't cancel). Single file; imports directly into VirtualBox or VMware.",true),
+    F("images/setupA-02-vbox-file-menu.png","A2 · File ▸ Import Appliance","In VirtualBox (or VMware File ▸ Open)."),
+    F("images/setupA-03-vbox-import-source.png","A3 · Source = Local File System","Leave the source as Local File System."),
+    F("images/setupA-04-vbox-import-file.png","A4 · Choose the .ova","Pick the appliance file you downloaded."),
+    F("images/setupA-05-vbox-import-settings.png","A5 · RAM / CPU, then Import","Give it 8 GB+ RAM and spare CPU, then Import."),
+    F("images/setupA-06-vbox-import-progress.png","A6 · Import runs (once)","When it finishes, start the VM."),
+    F("images/setup-first-boot.png","A7 · First boot & login","Sign in at the login screen with your student account, then reach the desktop."),
+  ],
+  B:[
+    F("images/setupB-01-utm-install.png","B1 · Install your hypervisor","Apple Silicon runs the arm64 appliance natively: VirtualBox (preferred), VMware Fusion, or UTM.",true),
+    F("images/setupB-01b-download.png","B1b · Download the appliance (OneDrive)","OneDrive has the arm64 .ova (VirtualBox/Fusion — imports directly) and a .utm.zip (UTM — double-click to extract the .utm).",true),
+    F("images/setupB-02-utm-welcome.png","B2 · UTM welcome","Open UTM."),
+    F("images/setupB-03-utm-open.png","B3 · Open the appliance","Open… (or double-click the extracted .utm) to add the arm64 VM."),
+    F("images/setupB-04-utm-library.png","B4 · Start it","Select the appliance and press ▶ Start. No internet? Set Network = Emulated VLAN."),
+    F("images/setup-first-boot.png","B5 · First boot & login","Sign in at the login screen, then reach the desktop (XFCE)."),
+  ],
+  core:[
+    F("images/core-01-key.png","1 · Enroll: your course key","donlab --key cs3670:<your-key> — paste the full one-liner your instructor gives you (don't type <your-key> literally)."),
+    F("images/core-02-doctor.png","2 · donlab --doctor","Green PASS = ready. A Docker Hub WARN = no network; images cache after the first pull."),
+    F("images/core-03-help.png","3 · donlab --help","Your commands: enroll, start, doctor, reset, clean."),
+    F("images/core-04-start.png","4 · Start the lab","donlab cs3670-lab1 — first run pulls images; it may set up i3 and reboot once (log back in)."),
+    F("images/core-05-desktop.png","5 · The lab desktop (i3)","Terminal left, manual right, dark theme."),
+    F("images/core-06-i3-tiled.png","6 · i3 tiling","Super+arrows move focus; Super+h/v set the split."),
+    F("images/core-07-i3-fullscreen.png","7 · Super+f fullscreen","Fill the screen with the focused window."),
+    F("images/core-08-i3-restored.png","8 · Super+f restores","Toggle back to tiled."),
+    F("images/core-09-i3-ws-moved.png","9 · Super+Shift+3 move","Send a window to workspace 3."),
+    F("images/core-10-i3-ws-view.png","10 · Super+3 view","Switch to that workspace; Super+1 returns."),
+    F("images/core-11-tmux-base.png","11 · tmux: shell in the host","Ctrl-b prefix; Ctrl-b d detaches (lab keeps running)."),
+    F("images/core-12-tmux-panes.png","12 · tmux panes","Ctrl-b % / Ctrl-b \" split; arrows move between panes."),
+    F("images/core-13-tmux-copymode.png","13 · tmux vi copy-mode","Ctrl-b [ then h j k l, /, ? to search."),
+    F("images/core-14-tmux-multihost.png","14 · One window per host","Multi-host labs: Ctrl-b w lists hosts, Ctrl-b <n> jumps."),
+    F("images/core-15-manual.png","15 · The manual","TOC + Bearings / Actions / Download Lab Report."),
+    F("images/core-16-task.png","16 · A task","Reading, command boxes, writeboxes."),
+    F("images/core-17-writebox-checkwork.png","17 · Save / self-check / progress","Writeboxes autosave; 'Check my answer' locks on first click; 'Mark complete' advances the progress bar."),
+    F("images/core-18-glossary.png","18 · Glossary hover","Dotted terms show a definition popover."),
+    F("images/core-19-bearings.png","19 · Bearings card","Who you are per host + CAC PIN for FRMS (redacted)."),
+    F("images/core-20-actions.png","20 · Actions","Live checkwork / stoplab / reset."),
+    F("images/core-21-finish-modal.png","21 · Finish & build report","STOPS the lab (check → stoplab → package .lab → build report). 'Just download a draft' keeps it running."),
+    F("images/core-22-report-answers.png","22 · Lab Report: answers","Dark, print-friendly (incl. Save-as-PDF)."),
+    F("images/core-23-report-standing.png","23 · Report: FRMS, Standing & CTF","Budget, rank/points, CTF flags, progress."),
+    F("images/core-24-labfile.png","24 · Your .lab on disk","~/labtainer_xfer/<lab>/<your-email>.<lab>.lab."),
+    F("images/core-25-lms-upload.png","25 · Upload to the LMS","Attach the .lab to the assignment and submit.",true),
+  ]
+};
+function render(list, el){
+  el.innerHTML = list.map(f=>`<figure>
+     <img src="${f.src}" alt="${f.t}" loading="lazy">
+     <figcaption><div class="t">${f.t}${f.ph?'<span class="badge">needs a seat</span>':''}</div>
+     <div class="n">${f.n}</div></figcaption></figure>`).join('');
+}
+function choose(p){
+  document.querySelectorAll('#pick button').forEach(b=>b.classList.toggle('on', b.dataset.p===p));
+  const s=document.getElementById('setup');
+  const label = p==='A' ? 'Setup A — Windows / Linux / Intel-Mac (x86-64)' : 'Setup B — Apple-Silicon Mac (arm64)';
+  s.innerHTML = `<h2>2 · ${label} <span class="tag">your platform only</span></h2>`;
+  const d=document.createElement('div'); render(DATA[p], d); s.appendChild(d);
+  render(DATA.core, document.getElementById('corefigs'));
+  document.getElementById('core').classList.remove('hidden');
+  try{localStorage.setItem('donrange-platform',p)}catch(e){}
+  s.scrollIntoView({behavior:'smooth',block:'start'});
+}
+try{const p=localStorage.getItem('donrange-platform'); if(p) choose(p);}catch(e){}
+</script>
+</body>
+</html>

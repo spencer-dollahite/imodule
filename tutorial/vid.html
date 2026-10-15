@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DoN Range — Zero to Lab (video)</title>
+<style>
+  :root{--bg:#0f1115;--panel:#161922;--ink:#e7eaf0;--muted:#9aa6b4;--accent:#5aa9d6;--line:#242a35}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"DejaVu Sans",sans-serif}
+  header{padding:30px 20px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#1a2a4a,#0f1115)}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+  h1{margin:0 0 4px;font-size:28px}.sub{color:var(--muted);margin:0}
+  .hint{color:var(--muted);font-size:14px}
+  h2{margin:32px 0 10px;font-size:21px;color:var(--accent)}
+  .pick{display:flex;gap:12px;flex-wrap:wrap;margin:20px 0}
+  .pick button{flex:1 1 280px;cursor:pointer;text-align:left;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:16px}
+  .pick button.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(90,169,214,.35) inset}
+  .pick b{display:block;font-size:17px}.pick small{color:var(--muted)}
+  video{width:100%;border:1px solid var(--line);border-radius:12px;background:#000;display:block}
+  .vcap{color:var(--muted);font-size:14px;margin:6px 0 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:12px}
+  figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  figure img{display:block;width:100%;background:#000}
+  figcaption{padding:9px 12px;font-size:13px;color:var(--muted);border-top:1px solid var(--line)}
+  figcaption b{color:var(--ink)}
+  footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);margin-top:40px;padding:20px 0 60px}
+  a{color:var(--accent)}.hidden{display:none}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>DoN Range — Zero to Lab <span style="font-size:15px;color:#9aa6b4">(video)</span></h1>
+  <p class="sub">Narrated long-form walkthrough + short per-action clips. Pick your platform for the setup half.</p>
+</div></header>
+<div class="wrap">
+  <h2>Pick your platform (setup half)</h2>
+  <p class="hint" style="margin:0 0 10px"><b style="color:#8fd0ff">Pick the native path.</b> x86-64 PC or <b>Intel Mac</b> &rarr; VirtualBox (or VMware); Apple-Silicon Mac &rarr; UTM. An Intel Mac runs the x86_64 appliance <b>natively</b>. Emulation (a non-native appliance, e.g. x86_64 on Apple Silicon) is a last resort &mdash; slow, only if native won't work. Have ready: the OneDrive link, your VM login, your cs3670 key.</p>
+  <div class="pick" id="pick">
+    <button data-p="A" onclick="choose('A')"><b>Windows / Linux / Intel-Mac (x86-64)</b><small>VirtualBox (or VMware) + official NPS x86_64 appliance</small></button>
+    <button data-p="B" onclick="choose('B')"><b>Apple-Silicon Mac (arm64)</b><small>UTM + arm64 appliance</small></button>
+  </div>
+  <section id="setupvid" class="hidden">
+    <h2 id="setuph">Setup (narrated)</h2>
+    <video id="sv" controls preload="metadata"></video>
+    <p class="vcap">Per-platform setup preamble. Frames marked “needs a seat” (install + download) are dark instruction cards; the import wizard + first boot are real captures.</p>
+  </section>
+  <section>
+    <h2>Core — narrated (identical on every platform)</h2>
+    <video id="cv" src="clips/vid-core.mp4" controls preload="metadata" poster="images/core-05-desktop.png"></video>
+    <p class="vcap">donlab → i3 → tmux → manual/features → Lab Report → LMS. Also available as a long autoplay WebP: <a href="clips/vid-core.webp">vid-core.webp</a>.</p>
+  </section>
+  <section>
+    <h2>Short per-action clips (README-ready: autoplay WebP + GIF fallback)</h2>
+    <div class="grid" id="clips"></div>
+  </section>
+  <footer>
+    Stills + full text: <a href="index.html">index.html</a> · <a href="TUTORIAL.md">TUTORIAL.md</a> ·
+    <a href="STORYBOARD.md">STORYBOARD.md</a> · <a href="MANIFEST.md">MANIFEST.md</a> · <a href="SANITY-LOG.md">SANITY-LOG.md</a><br>
+    Dark theme throughout, including the exported Lab Report. Only the course key is redacted.
+  </footer>
+</div>
+<script>
+const CLIPS=[
+ ["doctor","donlab --doctor → ready"],["start","donlab cs3670-lab1 (start)"],
+ ["desktop","the lab desktop (i3)"],["i3-fullscreen","i3: Super+f fullscreen & back"],
+ ["i3-workspace","i3: move to another workspace"],["tmux-panes","tmux: split into panes"],
+ ["tmux-copymode","tmux: vi copy-mode"],["writebox","write an answer + Check Work"],
+ ["glossary","glossary hover"],["bearings","Bearings card"],
+ ["export","Finish & build the Lab Report"],["labfile","your .lab on disk"],
+ ["setupA-import","Setup A: VirtualBox import"],["setupB-import","Setup B: UTM open"],
+ ["key","enroll: donlab --key"],["manual","the lab manual"],
+];
+document.getElementById('clips').innerHTML = CLIPS.map(([f,t])=>`
+  <figure><img src="clips/${f}.webp" alt="${t}" loading="lazy">
+  <figcaption><b>${t}</b><br>webp + <a href="clips/${f}.gif">gif</a></figcaption></figure>`).join('');
+function choose(p){
+  document.querySelectorAll('#pick button').forEach(b=>b.classList.toggle('on',b.dataset.p===p));
+  document.getElementById('setupvid').classList.remove('hidden');
+  document.getElementById('setuph').textContent = p==='A'
+    ? 'Setup A — Windows / Linux / Intel-Mac, x86-64 (narrated)' : 'Setup B — Apple-Silicon Mac, arm64 (narrated)';
+  const sv=document.getElementById('sv'); sv.src = p==='A'?'clips/vid-setupA.mp4':'clips/vid-setupB.mp4'; sv.load();
+  try{localStorage.setItem('donrange-platform',p)}catch(e){}
+}
+try{const p=localStorage.getItem('donrange-platform'); if(p) choose(p);}catch(e){}
+</script>
+</body>
+</html>
