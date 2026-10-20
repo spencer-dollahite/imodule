@@ -65,7 +65,10 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 #         the manual's report export takes the e-mail the student gave the framework (bridge /api/email), no second prompt.
 # 1.4.20: `donlab --init` -- the generic environment once (helpers, Firefox, i3, cgroup v2, e-mail, donlab on PATH), ONE reboot, then the
 #         i3 quick start finishes with `donlab --check` in the student directory.
-DONLAB_VERSION='1.4.24'
+# 1.4.25: donlab on PATH system-wide -- ensure_on_path also installs the wrapper (NOT a symlink) to
+#         /usr/local/bin when sudo needs no password (so `donlab` works in every terminal immediately,
+#         no re-login); ~/.local/bin stays the no-sudo fallback. Runs from any directory either way.
+DONLAB_VERSION='1.4.25'
 usage() {
   echo "usage: donlab --init           # once per VM: helpers, Firefox, i3, one reboot, then the check"
   echo "       donlab <labname> [--no-tmux] [labtainer args...]"
@@ -1359,21 +1362,40 @@ run_doctor() {
 # ~/.local/bin is on PATH in Ubuntu's default ~/.profile once the directory exists (next login); for the
 # current shells it is added to ~/.bashrc when missing. Written by --init and refreshed at each lab start.
 ensure_on_path() {
-  local self bin="$HOME/.local/bin" w
+  local self bin="$HOME/.local/bin" w sys="/usr/local/bin" sysw="" body lt sys_pre=0
   self="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"; [ -f "$self" ] || return 0
-  case "$self" in "$bin"/*) return 0 ;; esac
-  mkdir -p "$bin" 2>/dev/null || return 0
+  case "$self" in "$bin"/* | "$sys"/*) return 0 ;; esac   # already the wrapper -- don't wrap the wrapper
+  # The wrapper body. A WRAPPER, not a symlink: self-update rewrites $0 in place, and through a
+  # symlink $0 would be the link, so the update would clobber the link instead of the real copy.
+  body="$( printf '#!/bin/bash\n# donlab on PATH (written by donlab --init): runs the copy that self-updates in place.\n'
+           printf 'd=%q\n' "$self"
+           printf '[ -x "$d" ] || d="${LABTAINER_DIR:-$HOME/labtainer}/scripts/labtainer-student/donlab"\nexec "$d" "$@"\n' )"
+  # System-wide on PATH immediately, in every terminal, with no re-login -- when we can write
+  # /usr/local/bin WITHOUT a password prompt (NOPASSWD, or a cached sudo credential, e.g. during
+  # --init right after an apt step). We never prompt for this convenience; if sudo would ask, we
+  # skip it and fall back to the user-level wrapper below.
+  [ -e "$sys/donlab" ] && sys_pre=1   # already installed -> a later lab start stays silent
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    if printf '%s\n' "$body" | sudo -n tee "$sys/donlab" >/dev/null 2>&1 && sudo -n chmod 755 "$sys/donlab" 2>/dev/null; then sysw="$sys/donlab"; fi
+  fi
+  # Always install the user-level wrapper too (no sudo): the fallback where /usr/local/bin is not
+  # writable. ~/.local/bin is on PATH via Ubuntu's ~/.profile once it exists (next login).
   w="$bin/donlab"
-  { printf '#!/bin/bash\n# donlab on PATH (written by donlab --init): runs the copy that self-updates in place.\n'
-    printf 'd=%q\n' "$self"
-    printf '[ -x "$d" ] || d="${LABTAINER_DIR:-$HOME/labtainer}/scripts/labtainer-student/donlab"\nexec "$d" "$@"\n'; } > "$w.tmp" 2>/dev/null \
-    && chmod 755 "$w.tmp" && mv -f "$w.tmp" "$w" || { rm -f "$w.tmp"; return 0; }
-  # `./donlab` typed in the home directory works too: ~/donlab -> the wrapper (a student's own ~/donlab file is left alone)
-  if [ ! -e "$HOME/donlab" ] || [ -L "$HOME/donlab" ]; then ln -sfn "$w" "$HOME/donlab" 2>/dev/null || true; fi
-  case ":$PATH:" in *":$bin:"*) ;; *)
-    grep -qs 'donlab: ~/.local/bin on PATH' "$HOME/.bashrc" 2>/dev/null || printf '\n# donlab: ~/.local/bin on PATH (donlab is installed there)\ncase ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n' >> "$HOME/.bashrc"
-    echo "donlab: 'donlab' is now on your PATH (~/.local/bin) -- in new terminals, run it from anywhere (./donlab in your home directory works too)." ;;
-  esac
+  if mkdir -p "$bin" 2>/dev/null && printf '%s\n' "$body" > "$w.tmp" 2>/dev/null && chmod 755 "$w.tmp" 2>/dev/null && mv -f "$w.tmp" "$w" 2>/dev/null; then :; else rm -f "$w.tmp" 2>/dev/null; w=""; fi
+  # `./donlab` in the home directory works too: ~/donlab -> the system wrapper if we have it, else the
+  # user wrapper (a student's own ~/donlab file is left alone).
+  lt="${sysw:-$w}"
+  if [ -n "$lt" ] && { [ ! -e "$HOME/donlab" ] || [ -L "$HOME/donlab" ]; }; then ln -sfn "$lt" "$HOME/donlab" 2>/dev/null || true; fi
+  # Announce only when donlab is NEWLY placed on PATH; stay silent on later lab starts (idempotent).
+  if [ -n "$sysw" ]; then
+    [ "$sys_pre" = 1 ] || echo "donlab: 'donlab' is now on your PATH (/usr/local/bin) -- run it from anywhere, in any terminal."
+  elif [ -n "$w" ]; then
+    case ":$PATH:" in
+      *":$bin:"*) ;;                                     # ~/.local/bin already on PATH -> nothing to add, stay silent
+      *) grep -qs 'donlab: ~/.local/bin on PATH' "$HOME/.bashrc" 2>/dev/null || printf '\n# donlab: ~/.local/bin on PATH (donlab is installed there)\ncase ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac\n' >> "$HOME/.bashrc"
+         echo "donlab: 'donlab' is now on your PATH (~/.local/bin) -- in new terminals, run it from anywhere (./donlab in your home directory works too)." ;;
+    esac
+  fi
   return 0
 }
 # ---- donlab --init: the generic lab environment, once, for any course (owner, 2026-10-04) --------------
