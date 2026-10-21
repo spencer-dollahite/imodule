@@ -6,7 +6,8 @@
       "severity": "warn",
       "summary": "A CAC PIN update for this lab is in progress. The PIN on the Bearings card may not be accepted yet on this lab's seats.",
       "workaround": "Until the update lands, if the CAC PIN shown is rejected, enter the fallback PIN for your account: dholloway 135950.",
-      "until": "2026-10-25"
+      "until": "2026-10-25",
+      "fixed_in": 28
     }
   ]
 }
