@@ -1,0 +1,13 @@
+{
+  "notes": [
+    {
+      "id": "cac-pin-rollout-2026-10",
+      "date": "2026-10-21",
+      "severity": "warn",
+      "summary": "A CAC PIN update for this lab is in progress. The PIN on the Bearings card may not be accepted yet on this lab's seats.",
+      "workaround": "Until the update lands, if the CAC PIN shown is rejected, enter the fallback PIN for your account: dcho 199954, dholloway 406848.",
+      "fix": "#119",
+      "until": "2026-10-25"
+    }
+  ]
+}
