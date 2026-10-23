@@ -1,0 +1,12 @@
+{
+  "notes": [
+    {
+      "id": "frms-cross-lab-persistence",
+      "date": "2026-10-23",
+      "severity": "warn",
+      "summary": "FRMS may not carry activity across labs: items recorded in one lab might not persist or appear in FRMS when you open a later lab.",
+      "workaround": "Your graded work is captured per lab in the Lab Report and the .lab archive you submit; if FRMS does not reflect earlier-lab activity, continue the current lab and tell your instructor.",
+      "fix": "#148"
+    }
+  ]
+}
