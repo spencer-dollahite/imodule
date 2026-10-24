@@ -8,13 +8,6 @@
       "workaround": "Until the update lands, if the CAC PIN shown is rejected, enter the fallback PIN for your account: dholloway 135950.",
       "until": "2026-10-25",
       "fixed_in": 28
-    },
-    {
-      "id": "frms-cross-lab-persistence",
-      "date": "2026-10-23",
-      "severity": "warn",
-      "summary": "FRMS may not carry activity across labs: items recorded in one lab might not persist or appear in FRMS when you open a later lab.",
-      "workaround": "Your graded work is captured per lab in the Lab Report and the .lab archive you submit; if FRMS does not reflect earlier-lab activity, continue the current lab and tell your instructor."
     }
   ]
 }
