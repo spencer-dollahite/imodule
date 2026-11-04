@@ -2278,6 +2278,16 @@ ensure_container_x() {
     cname="$LAB.$c.student"
     [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" = true ] || continue
     docker exec "$cname" sh -c "mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix && ln -sfn /var/tmp/.X11-unix/X$n /tmp/.X11-unix/X$n; grep -qs '^DISPLAY=' /etc/environment || echo 'DISPLAY=:$n' >> /etc/environment" >/dev/null 2>&1 || true
+    # MIT-SHM: the container has its own IPC namespace, so the host X server cannot attach the SysV shared-memory
+    # segments GDK/cairo clients create for XShm images. GDK's probe sometimes passes (a shm id that happens to exist on
+    # the host) and a later attach then fails with "BadAccess ... (MIT-SHM)" and the app dies (gpicview 2 of 6 launches,
+    # cs3600-lab2, 2026-11-02). With kernel.shmmax=0 in the seat, shmget fails and every toolkit falls back to plain X
+    # images cleanly (proven: gpicview 6/6, ghex 3/3). X11 seats only (a server container never needs XShm); the
+    # containers run privileged, so the sysctl is writable. Opt out with DONLAB_NO_SHMFIX=1.
+    [ -n "${DONLAB_NO_SHMFIX:-}" ] || docker exec -u root "$cname" sh -c 'sysctl -q -w kernel.shmmax=0 2>/dev/null || echo 0 > /proc/sys/kernel/shmmax 2>/dev/null' >/dev/null 2>&1 || true
+    # GTK4 (ghex): the default "ngl" renderer dlopens libGLESv2, which the seats do not ship, and the app aborts
+    # (core dump) at launch; the cairo renderer draws through plain X on any VM GPU. Login shells source profile.d.
+    docker exec -u root "$cname" sh -c 'printf "%s\n" "# DoN Range: GTK4 apps abort on the GL renderer without libGLESv2; cairo renders on any X server." "export GSK_RENDERER=cairo" > /etc/profile.d/11-don-gtk4-render.sh; chmod 644 /etc/profile.d/11-don-gtk4-render.sh' >/dev/null 2>&1 || true
     # each lab browser's i3 title is user@host ("dcho@hi-ws-it"): set its X class to that. The image's wrapper passes
     # --class lab-firefox --name <seat>, but Firefox names every browser window's instance "Navigator" and honours only
     # the class, so rewrite that one argument in place (idempotent; no image rebuild; Firefox remoting still works).
