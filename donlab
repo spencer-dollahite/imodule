@@ -2079,8 +2079,10 @@ lab_tmux() {
   tmux set -t "$SESSION" status-style "bg=#00337a,fg=#dceafc" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" status-left-style "fg=#ffffff,bold" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" status-right-style "fg=#bcd6f5" >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" window-status-current-style "bg=#0a58b0,fg=#ffffff,bold" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-current-style "bg=#5aa9d6,fg=#042038,bold" >/dev/null 2>&1 || true   # active window: light-blue highlight, dark text
+  tmux set -t "$SESSION" window-status-current-format " #I:#W " >/dev/null 2>&1 || true                    # padding so the highlight reads clearly
   tmux set -t "$SESSION" window-status-style "fg=#cfe0f7" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-format " #I:#W " >/dev/null 2>&1 || true
   tmux set -t "$SESSION" message-style "bg=#00337a,fg=#ffffff" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" pane-border-style "fg=#274056" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" pane-active-border-style "fg=#5aa9d6" >/dev/null 2>&1 || true
