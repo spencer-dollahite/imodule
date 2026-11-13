@@ -8,6 +8,14 @@
       "workaround": "Until the update lands, if the CAC PIN shown is rejected, enter the fallback PIN for your account: dholloway 655092, lferraro 777469.",
       "until": "2026-10-25",
       "fixed_in": 27
+    },
+    {
+      "id": "openbao-sealed-restart-2026-11",
+      "date": "2026-11-13",
+      "severity": "warn",
+      "summary": "Task 15: fleet-sync may report it cannot read the token from the vault, and https://vault.fcdpac.navy.mil:8200 may show OpenBao sealed. Some seats can hit this if the vault service restarts mid-lab.",
+      "workaround": "You are not meant to unseal the vault yourself (you do not hold the key). Restart the lab to re-unseal it: run `stoplab cs3670-lab5`, then `donlab cs3670-lab5`, and retry Task 15. A root-cause fix is in progress.",
+      "until": "2026-11-27"
     }
   ]
 }
