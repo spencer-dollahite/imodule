@@ -1037,20 +1037,28 @@ if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ] && [ "${SETU
   [ ${#PASS[@]} -ge 1 ] || { usage; exit 1; }
   LAB="${PASS[0]}"
   # The course is the lab-id prefix (cs3670-lab4 -> cs3670). It selects the per-course bundle and
-  # the per-course key the student installed with `donlab --key <course>:<key>`.
+  # the per-course key the student installed with `donlab --key <course>:<key>`. The special lab
+  # `bootcamp` is the OPEN onboarding: it rides a separate UNENCRYPTED public bundle and needs no key.
   COURSE="${LAB%%-*}"
-  case "$COURSE" in cs3600|cs3670|cs3690) ;; *)
-    echo "donlab: '$LAB' is not a recognized lab id (expected cs3600-*, cs3670-*, or cs3690-*)."; exit 1 ;;
+  BOOTCAMP_OPEN=0
+  case "$COURSE" in
+    bootcamp)
+      # open, keyless onboarding -- unencrypted bundle (imodule-bootcamp.tar, no .enc), no per-course key
+      IMODULE_URL="https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule-bootcamp.tar"
+      COURSE_KEY=''; BOOTCAMP_OPEN=1 ;;
+    cs3600|cs3670|cs3690)
+      IMODULE_URL="https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule-$COURSE.tar.enc"
+      eval "COURSE_KEY=\${KEY_$COURSE}"
+      if [ -z "$COURSE_KEY" ]; then
+        echo "donlab: you don't have the $COURSE key yet, so its labs can't be unlocked."
+        echo "        Get your $COURSE key from your instructor, then run:"
+        echo "            donlab --key $COURSE:<key>"
+        echo "        and re-run:  donlab $LAB"
+        exit 1
+      fi ;;
+    *)
+      echo "donlab: '$LAB' is not a recognized lab id (expected bootcamp, cs3600-*, cs3670-*, or cs3690-*)."; exit 1 ;;
   esac
-  IMODULE_URL="https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/imodule-$COURSE.tar.enc"
-  eval "COURSE_KEY=\${KEY_$COURSE}"
-  if [ -z "$COURSE_KEY" ]; then
-    echo "donlab: you don't have the $COURSE key yet, so its labs can't be unlocked."
-    echo "        Get your $COURSE key from your instructor, then run:"
-    echo "            donlab --key $COURSE:<key>"
-    echo "        and re-run:  donlab $LAB"
-    exit 1
-  fi
 fi
 
 # ---- preflight: the things every lab needs ----
@@ -1535,8 +1543,13 @@ if [ -z "$remote_sha" ] || [ "$remote_sha" != "$local_sha" ]; then
   step "Downloading the lab bundle (this can take a minute)..."
   if { if _is_tty; then curl -fL --progress-bar "$IMODULE_URL" -o "$TMP/e"; else curl -fsSL "$IMODULE_URL" -o "$TMP/e"; fi; }; then
     if [ -z "$remote_sha" ] || [ "$(sha256sum "$TMP/e" | awk '{print $1}')" = "$remote_sha" ]; then
-      printf '%s' "$COURSE_KEY" | base64 -d > "$TMP/k"; chmod 600 "$TMP/k"
-      if openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; then
+      if [ "${BOOTCAMP_OPEN:-0}" = 1 ]; then
+        # open bootcamp: the fetched bundle is already the plaintext tar (no key, no decrypt)
+        cp "$TMP/e" "$TMP/imodule.tar"; _dec_ok=1
+      elif printf '%s' "$COURSE_KEY" | base64 -d > "$TMP/k" && { chmod 600 "$TMP/k"; openssl enc -d -aes-256-cbc -pbkdf2 -pass file:"$TMP/k" -in "$TMP/e" -out "$TMP/imodule.tar" 2>/dev/null; }; then
+        _dec_ok=1
+      else _dec_ok=0; fi
+      if [ "$_dec_ok" = 1 ]; then
         IMOD="$(command -v imodule || echo "${LABTAINER_DIR:-}/scripts/labtainer-student/bin/imodule")"
         # Older appliance releases of imodule open ~/.local/share/labtainers/imodules.txt for
         # append WITHOUT creating the directory (FileNotFoundError on a fresh box). Pre-create it.
