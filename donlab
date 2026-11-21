@@ -1142,6 +1142,41 @@ fi
 # wrapper execs a RELATIVE bin/start.py, so donlab also auto-cds into scripts/labtainer-student
 # below -- a wrong working directory (e.g. the student's home) can't make the lab fail. ----
 export LABTAINER_DIR="$LTDIR"
+
+# ---- DNS self-heal (self-healing, per the student-facing doctrine) -----------------------------
+# The framework's GetDNS() (labutils.py) discovers the host resolver with `systemd-resolve --status`,
+# a binary Ubuntu 24.04 no longer ships (only `resolvectl` remains). Where nmcli is also absent, GetDNS
+# falls through to its hardcoded default, so each lab container is created with `--dns=8.8.8.8` alone.
+# On a network that blocks 8.8.8.8 (common on enterprise/government nets, and this project's own build
+# box), Docker's embedded resolver then fails external names: `apt`/`yum`/`pip`, and the enclave DC's
+# package-repo forwards, hang or fail. donlab finds the host's resolver and hands it to the framework
+# via LABTAINER_DNS; GetDNS PREPENDS it and keeps 8.8.8.8 as the last-resort fallback, so this is
+# harmless where 8.8.8.8 already works, and an operator-set LABTAINER_DNS is left alone.
+#
+# don_host_dns mirrors the upstream framework fix (mfthomps/Labtainers PR 113) and Docker's own
+# discovery: read /etc/resolv.conf, then (where that names only the local stub) the upstream list
+# systemd-resolved maintains, and print the first IPv4 server that is not loopback. A container cannot
+# reach the host's 127.0.0.53 stub, and lab networks are IPv4, so an IPv6 server (including a
+# link-local fe80::...%if entry from a router advertisement) is skipped. Prints nothing if none is found.
+don_host_dns() {
+  local f d
+  [ "$#" -gt 0 ] || set -- /etc/resolv.conf /run/systemd/resolve/resolv.conf
+  for f in "$@"; do
+    [ -r "$f" ] || continue
+    d="$(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && $2 !~ /^127\./ && $2 != "0.0.0.0" { print $2; exit }' "$f" 2>/dev/null)"
+    if [ -n "$d" ]; then printf '%s\n' "$d"; return 0; fi
+  done
+  return 0
+}
+if [ -z "${LABTAINER_DNS:-}" ]; then
+  _don_dns="$(don_host_dns)"
+  if [ -n "$_don_dns" ]; then
+    export LABTAINER_DNS="$_don_dns"
+    [ -n "${DONLAB_DEBUG:-}" ] && echo "donlab: LABTAINER_DNS=$_don_dns (host resolver; framework default is 8.8.8.8-only)" >&2
+  fi
+  unset _don_dns
+fi
+
 # The `labtainer` binary we invoke is ALWAYS the one inside the validated tree, whichever way
 # the tree was found (a trusted env sets no $LT; a PATH shim could point elsewhere).
 LT="$LTDIR/scripts/labtainer-student/bin/labtainer"
