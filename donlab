@@ -68,13 +68,19 @@ DONLAB_URL=https://raw.githubusercontent.com/$DON_REPO/$DON_BRANCH/donlab
 # 1.4.25: donlab on PATH system-wide -- ensure_on_path also installs the wrapper (NOT a symlink) to
 #         /usr/local/bin when sudo needs no password (so `donlab` works in every terminal immediately,
 #         no re-login); ~/.local/bin stays the no-sudo fallback. Runs from any directory either way.
-DONLAB_VERSION='1.4.25'
+# 1.4.26: lab terminals split words normally again -- donlab adds the framework's one-line IFS fix to its shell
+#         hook (and to a resumed lab's containers); Ctrl-b % and Ctrl-b " work in every tmux window (lab-host shell
+#         in a lab window, ordinary split elsewhere, also after a lab stops); `donlab --stop [lab]` stops a lab from
+#         any directory, asking first when no Lab Report was exported; tmux chrome on the manual's palette.
+DONLAB_VERSION='1.4.26'
 usage() {
   echo "usage: donlab --init           # once per VM: helpers, Firefox, i3, one reboot, then the check"
   echo "       donlab <labname> [--no-tmux] [labtainer args...]"
   echo "       donlab --key <course>:<key>   # install your per-course key (cs3600/cs3670/cs3690)"
   echo "       donlab -u|--update            # force-update donlab itself (cache-busted)"
   echo "       donlab --update-labtainers    # update the Labtainers framework itself, then re-run"
+  echo "       donlab --stop [labname]       # stop a lab from any directory and collect your work (same as: donlab stoplab)"
+  echo "                                     # (asks first if no Lab Report was exported; the report is built in the manual)"
   echo "       donlab --reset <labname>      # discard this lab's containers and start it fresh"
   echo "       donlab --doctor               # check this VM is ready to run labs (X, clipboard, docker, registry)"
   echo "       donlab --clean                # free disk: old lab images, stopped lab containers, build cache, temp copies"
@@ -1005,6 +1011,7 @@ esac; done
 USE_TMUX=1
 NO_I3=0
 UPDATE_LT=0
+STOP_LAB=0
 DOCTOR=0
 CLEAN=0
 SETUP=0
@@ -1022,6 +1029,8 @@ for a in "$@"; do
     --tmux-check)    TMUX_CHECK=1 ;;   # battery/self-test: lay out tmux for a RUNNING lab, verify, exit
     --init|setup)    SETUP=1 ;;         # one-time, course-agnostic environment setup (helpers, i3, Firefox, one reboot)
     --update-labtainers|--update-framework|--update-lt) UPDATE_LT=1 ;;
+    --stop|--stoplab|stoplab) STOP_LAB=1 ;;
+    -y|--yes)        ASSUME_YES=1 ;;   # answer yes to donlab --stop's "stop without a Lab Report export?" question   # stop a lab from any directory (runs the framework's stoplab where it must run)
     *)               PASS+=("$a") ;;
   esac
 done
@@ -1033,7 +1042,7 @@ if [ -n "${SCROLL_SET:-}" ]; then
   scroll_set_mode "$SCROLL_SET" || exit 1
   [ ${#PASS[@]} -ge 1 ] || exit 0
 fi
-if [ "$UPDATE_LT" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ] && [ "${SETUP:-0}" != 1 ]; then
+if [ "$UPDATE_LT" != 1 ] && [ "$STOP_LAB" != 1 ] && [ "$DOCTOR" != 1 ] && [ "$CLEAN" != 1 ] && [ "${SETUP:-0}" != 1 ]; then
   [ ${#PASS[@]} -ge 1 ] || { usage; exit 1; }
   LAB="${PASS[0]}"
   # The course is the lab-id prefix (cs3670-lab4 -> cs3670). It selects the per-course bundle and
@@ -1176,6 +1185,42 @@ if [ -z "${LABTAINER_DNS:-}" ]; then
   fi
   unset _don_dns
 fi
+
+# ---- self-heal: the framework's shell hook must not leak IFS into the student's terminal ----
+# Labtainers copies its lab_bin directory from THIS install into each lab container when the container is set up,
+# and every interactive seat shell sources lab_bin/bash-pre-capinout.sh. Its preexec() sets IFS=' ' for its own
+# parsing and, in releases up to v1.4.4n, never restores it: after the first command a student's shell no longer
+# splits on tabs or newlines, so `$(aws ... --output text)` with several ids arrives as ONE argument and a
+# `for x in $(cmd)` over several lines runs once. Fixed upstream (mfthomps/Labtainers PR 112, one line, merged
+# 2026-11-06) but in no release yet, and donlab does not update the framework on a normal run. So apply the same
+# one line here, to the install's copy (new containers get it) and to this lab's existing containers (new shells
+# in a resumed lab get it). Idempotent: a file that already scopes IFS is left alone, so this becomes a no-op once
+# a fixed framework is installed. Never fatal.
+don_fix_ifs_file() {     # $1 = path to a bash-pre-capinout.sh; prints "patched" when it changed the file
+  local f="$1"
+  [ -f "$f" ] && [ -w "$f" ] || return 0
+  grep -q '^[[:space:]]*local IFS=' "$f" 2>/dev/null && return 0
+  grep -q '^preexec() *{' "$f" 2>/dev/null || return 0          # not the file we know: leave it alone
+  cp -p "$f" "$f.donlab-orig" 2>/dev/null || true
+  sed -i '/^preexec() *{/a\   local IFS="$IFS"   # donlab: scope IFS to this function (upstream PR 112)' "$f" 2>/dev/null || return 0
+  grep -q '^[[:space:]]*local IFS=' "$f" 2>/dev/null && echo patched
+  return 0
+}
+don_fix_ifs_leak() {
+  local hook="$LTDIR/scripts/labtainer-student/lab_bin/bash-pre-capinout.sh" c u
+  [ "$(don_fix_ifs_file "$hook")" = patched ] && step "Fixed a framework shell bug in this install (word splitting in lab terminals)."
+  # containers of this lab that already exist (a resumed lab): patch the copy they were given
+  [ -n "${LAB:-}" ] || return 0
+  for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "^${LAB}\\.[^.]+\\.student$" || true); do
+    docker exec -u root "$c" sh -c 'for f in /home/*/.local/bin/bash-pre-capinout.sh; do
+        [ -f "$f" ] || continue
+        grep -q "^[[:space:]]*local IFS=" "$f" && continue
+        grep -q "^preexec() *{" "$f" || continue
+        sed -i "/^preexec() *{/a\\   local IFS=\"\$IFS\"   # donlab: scope IFS to this function (upstream PR 112)" "$f"
+      done' >/dev/null 2>&1 || true
+  done
+  return 0
+}
 
 # The `labtainer` binary we invoke is ALWAYS the one inside the validated tree, whichever way
 # the tree was found (a trusted env sets no $LT; a PATH shim could point elsewhere).
@@ -1556,6 +1601,55 @@ if [ "${CLEAN:-0}" = 1 ]; then run_clean; exit $?; fi
 
 # framework-update mode: `donlab --update-labtainers` -- do it and exit (needs $LTDIR/$LS_DIR).
 if [ "$UPDATE_LT" = 1 ]; then update_labtainers; exit $?; fi
+
+# stop mode: `donlab --stop [lab]` (also --stoplab, or the word stoplab). The framework's stoplab reads its config
+# by a relative path, so run from anywhere else it dies with "Config file ../../config/labtainer.config does not
+# exists!". This runs it from the framework's student directory. With no lab named it stops the one that is running.
+stop_lab() {
+  local lab="${1:-}" sdir="$LTDIR/scripts/labtainer-student" running
+  [ -x "$sdir/bin/stoplab" ] || { echo "donlab: could not find the framework's stoplab under $sdir"; return 1; }
+  if [ -z "$lab" ]; then
+    running="$(docker ps --format '{{.Names}}' 2>/dev/null | sed -n 's/^\(.*\)\.[^.]*\.student$/\1/p' | sort -u)"
+    case "$(printf '%s\n' "$running" | grep -c .)" in
+      0) echo "donlab: no lab is running."; return 0 ;;
+      1) lab="$running" ;;
+      *) echo "donlab: more than one lab is running; name the one to stop:"; printf '    donlab --stop %s\n' $running; return 1 ;;
+    esac
+  fi
+  # The Lab Report is built in the manual's browser (the answers live there), by the "Download Lab Report" button,
+  # which also runs the checks, stops the lab and tucks a copy of the report into the .lab. This command cannot
+  # build it. So unless a report has already been exported for this lab, say what is about to be skipped and ask.
+  local xfer="$HOME/labtainer_xfer/$lab" saved=0 ans=""
+  [ -s "$xfer/.don-stash/lab-report.html" ] && saved=1
+  if [ "$saved" = 0 ]; then
+    echo
+    echo "donlab --stop stops the lab and packages the work from the lab's machines into your .lab file."
+    echo "It does NOT build your Lab Report (your written answers, the check results and your FRMS record)."
+    echo "That is done from the lab manual: the  Download Lab Report  button at the top right. It runs the"
+    echo "checks, saves the report, stops the lab for you, and puts a backup copy of the report in the .lab."
+    echo
+    echo "No Lab Report export was found for $lab. Your answers are saved in the manual's browser and are"
+    echo "not lost if you stop here, but a report built after the lab has stopped cannot include fresh check"
+    echo "results, and this .lab will not hold the backup copy."
+    echo
+    if [ "${ASSUME_YES:-0}" = 1 ]; then
+      echo "(--yes given: stopping without a Lab Report export.)"
+    elif [ -t 0 ] && [ -t 1 ]; then
+      read -r -p "Are you sure you want to stop without saving a full Lab Report export? [y]es / [n]o (no) " ans || ans=""
+      case "$ans" in
+        y|Y|yes|YES|Yes) ;;
+        *) echo "Not stopped. $lab is still running: use  Download Lab Report  in the manual, or run  donlab --stop  again."; return 0 ;;
+      esac
+    else
+      echo "(not an interactive terminal: stopping; add --yes to say so explicitly.)"
+    fi
+  else
+    echo "A Lab Report export for $lab was found; stopping the lab."
+  fi
+  step "Stopping $lab (your work is collected into ~/labtainer_xfer/$lab/):"
+  ( cd "$sdir" && ./bin/stoplab "$lab" )
+}
+if [ "$STOP_LAB" = 1 ]; then stop_lab "${PASS[@]:-}"; exit $?; fi
 LS_DIR="$LTDIR/scripts/labtainer-student"
 if [ -d "$LS_DIR" ]; then
   if [ "$(pwd -P 2>/dev/null)" != "$(cd "$LS_DIR" 2>/dev/null && pwd -P)" ]; then
@@ -2121,25 +2215,56 @@ lab_tmux() {
     tmux bind -T copy-mode-vi MouseDragEnd1Pane send -X copy-pipe-and-cancel >/dev/null 2>&1 || true
   fi
   tmux set -t "$SESSION" pane-border-status top >/dev/null 2>&1 || true
-  # Force a dark-blue status line + readable tabs and subtle borders, scoped to THIS
+  # Force a dark status line + readable tabs and subtle borders, scoped to THIS
   # session, so our tmux looks right regardless of the host VM's theme. (Pane contents are
   # the terminal emulator's own colors; this styles tmux's chrome.)
-  tmux set -t "$SESSION" status-style "bg=#00337a,fg=#dceafc" >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" status-left-style "fg=#ffffff,bold" >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" status-right-style "fg=#bcd6f5" >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" window-status-current-style "bg=#5aa9d6,fg=#042038,bold" >/dev/null 2>&1 || true   # active window: light-blue highlight, dark text
+  # Colors come from the manual's and FRMS's palette (docs/theme/theme.css): status line on the panel color
+  # (#16212c), all of its text in the manual's own text color (#dbe4ea), the current window as a lighter gray block
+  # (#3d5263) with the same text, bold. Pane borders: the rule gray (#293a48),
+  # and the manual's and FRMS's accent blue (#5aa9d6) around the active pane (a lighter gray was too hard to spot).
+  tmux set -t "$SESSION" status-style "bg=#16212c,fg=#dbe4ea" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-left-style "fg=#dbe4ea,bold" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" status-right-style "fg=#dbe4ea" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-current-style "bg=#3d5263,fg=#dbe4ea,bold" >/dev/null 2>&1 || true   # active window: light-blue highlight, dark text
   tmux set -t "$SESSION" window-status-current-format " #I:#W " >/dev/null 2>&1 || true                    # padding so the highlight reads clearly
-  tmux set -t "$SESSION" window-status-style "fg=#cfe0f7" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" window-status-style "fg=#dbe4ea" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" window-status-format " #I:#W " >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" message-style "bg=#00337a,fg=#ffffff" >/dev/null 2>&1 || true
-  tmux set -t "$SESSION" pane-border-style "fg=#274056" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" message-style "bg=#16212c,fg=#dbe4ea" >/dev/null 2>&1 || true
+  tmux set -t "$SESSION" pane-border-style "fg=#293a48" >/dev/null 2>&1 || true
   tmux set -t "$SESSION" pane-active-border-style "fg=#5aa9d6" >/dev/null 2>&1 || true
-  # Make pane splits open a shell INSIDE the current window's host (a docker exec into
-  # that container), not a plain shell on the Labtainer host. The host is read live from
-  # the active window's name at split time. Bindings are server-wide; donlab (re)sets them
-  # for the current lab on each launch.
-  tmux bind-key '%'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -h \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
-  tmux bind-key '"'  run-shell "H=\$(tmux display -p '#{window_name}'); tmux split-window -v \"docker exec -it $LAB.\$H.student bash -l\"" 2>/dev/null || true
+  # Pane splits. Inside a lab window, Ctrl-b % and Ctrl-b " open a shell INSIDE that window's host (a docker exec
+  # into its container). Everywhere else they are tmux's ordinary splits. The bindings are server-wide and outlive
+  # the lab, so the decision is made AT SPLIT TIME from the session and window the key was pressed in, by a small
+  # helper: the earlier binding named this lab's containers outright, and once the lab stopped (or in any other
+  # session on the same server) every split opened a pane that died at once -- "Ctrl-b % does nothing".
+  local splitter="$HOME/.config/don-range/tmux-split"
+  mkdir -p "$HOME/.config/don-range" 2>/dev/null || true
+  cat > "$splitter" <<'SPLIT' 2>/dev/null || true
+#!/bin/sh
+# donlab: split a tmux pane. usage: tmux-split -h|-v <session> <window> <pane-path> <pane-id>
+# The pane is named explicitly, so the split lands where the key was pressed whatever else is attached.
+# In a lab session (lab-<lab id>) whose window is a running lab host, the new pane is a shell on that host;
+# otherwise it is an ordinary split in the directory of the pane it came from.
+dir="$1"; sess="$2"; win="$3"; path="$4"; pane="$5"
+set --; [ -n "$pane" ] && set -- -t "$pane"
+case "$dir" in -h|-v) ;; *) dir=-v ;; esac
+case "$sess" in
+  lab-*) c="${sess#lab-}.$win.student"
+         if [ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" = true ]; then
+           exec tmux split-window "$dir" "$@" "docker exec -it $c bash -l"
+         fi ;;
+esac
+if [ -n "$path" ] && [ -d "$path" ]; then exec tmux split-window "$dir" "$@" -c "$path"; fi
+exec tmux split-window "$dir" "$@"
+SPLIT
+  chmod +x "$splitter" 2>/dev/null || true
+  if [ -x "$splitter" ]; then
+    tmux bind-key '%' run-shell "'$splitter' -h '#{session_name}' '#{window_name}' '#{pane_current_path}' '#{pane_id}' || tmux split-window -h" 2>/dev/null || true
+    tmux bind-key '"' run-shell "'$splitter' -v '#{session_name}' '#{window_name}' '#{pane_current_path}' '#{pane_id}' || tmux split-window -v" 2>/dev/null || true
+  else                                    # could not write the helper: leave tmux's own splits in place
+    tmux bind-key '%' split-window -h 2>/dev/null || true
+    tmux bind-key '"' split-window -v 2>/dev/null || true
+  fi
   tmux select-window -t "$SESSION":0 >/dev/null 2>&1 || true
   # Self-check: the panes must hold a LIVE shell inside a container. A docker exec that died on the spot
   # leaves an empty, instantly-closing window -- the "tmux didn't work" report. Only fall back when we
@@ -2187,6 +2312,9 @@ if [ "${TMUX_CHECK:-0}" = 1 ]; then
 fi
 
 clear_stale_labtainers_tmp   # another user's /tmp/labtainers/ makes start.py's tar staging fail
+# Before the framework sets up or resumes this lab's containers: make sure its shell hook does not leak IFS.
+don_fix_ifs_leak || true
+
 # ---- start the lab, self-healing a common failure: a leftover Docker network (or a
 #      not-fully-stopped previous lab) with an overlapping subnet blocks the start, so no
 #      containers come up. Detect the framework's cleanup hint, clear it, and retry once. ----
