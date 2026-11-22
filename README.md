@@ -334,6 +334,15 @@ your instructor) before continuing.**
 
 ### 6.5 Start a lab
 
+New to the command line, or to this lab environment? Run the bootcamp first. It is open to every
+course, needs no key, and takes about 60 to 90 minutes:
+
+```bash
+./donlab bootcamp
+```
+
+Then start your course's first lab:
+
 ```bash
 ./donlab cs3670-lab1
 ```
@@ -453,6 +462,7 @@ extension, upload the PDF and send the `.lab` by the route your instructor gives
 | Command | Effect |
 |---|---|
 | `./donlab --key <course>:<key>` | Install your key for a course (`cs3600`/`cs3670`/`cs3690`). |
+| `./donlab bootcamp` | The open command-line bootcamp (no key needed). |
 | `./donlab --doctor` | Readiness check (Docker, display, clipboard, registry, disk, vim, tmux). |
 | `./donlab -v` | Launcher version, channel, build id. |
 | `./donlab -u` | Force a self-update check now. |
